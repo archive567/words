@@ -1,0 +1,115 @@
+<meta charset="utf-8"> <link rel="stylesheet" href="tonyday5667.github.io/other/lhs.css">
+<script type="text/javascript" async
+  src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-MML-AM_CHTML">
+</script>
+<h1 id="stream-words">stream-words</h1>
+<h2 id="ghc-options"><a href="https://downloads.haskell.org/~ghc/latest/docs/html/users_guide/flags.html#flag-reference">ghc options</a></h2>
+<div class="sourceCode"><pre class="sourceCode literate haskell"><code class="sourceCode haskell"><span class="ot">{-# OPTIONS_GHC -Wall #-}</span>
+<span class="ot">{-# OPTIONS_GHC -fno-warn-type-defaults #-}</span></code></pre></div>
+<h2 id="pragmas"><a href="https://downloads.haskell.org/~ghc/latest/docs/html/users_guide/lang.html">pragmas</a></h2>
+<div class="sourceCode"><pre class="sourceCode literate haskell"><code class="sourceCode haskell"><span class="co">-- doctest doesn&#39;t look at the cabal file, so you need pragmas here</span>
+<span class="ot">{-# LANGUAGE NoImplicitPrelude #-}</span>
+<span class="ot">{-# LANGUAGE OverloadedStrings #-}</span>
+<span class="ot">{-# LANGUAGE DataKinds #-}</span>
+<span class="ot">{-# LANGUAGE DeriveGeneric #-}</span>
+<span class="ot">{-# LANGUAGE ScopedTypeVariables #-}</span>
+<span class="ot">{-# LANGUAGE TypeOperators #-}</span>
+<span class="ot">{-# LANGUAGE FlexibleInstances #-}</span></code></pre></div>
+<h2 id="libraries"><a href="https://www.stackage.org/">libraries</a></h2>
+<ul class="incremental">
+<li><a href="https://www.stackage.org/package/protolude">protolude</a></li>
+<li><a href="https://www.stackage.org/package/optparse-generic">optparse-generic</a></li>
+</ul>
+<div class="sourceCode"><pre class="sourceCode literate haskell"><code class="sourceCode haskell"><span class="kw">import </span><span class="dt">Protolude</span>
+<span class="kw">import </span><span class="dt">GHC.Base</span> (<span class="dt">String</span>)
+<span class="kw">import </span><span class="dt">Options.Generic</span>
+<span class="kw">import qualified</span> <span class="dt">Streaming</span> <span class="kw">as</span> <span class="dt">S</span>
+<span class="kw">import qualified</span> <span class="dt">Streaming.Prelude</span> <span class="kw">as</span> <span class="dt">S</span>
+<span class="kw">import qualified</span> <span class="dt">Data.ByteString.Streaming.HTTP</span> <span class="kw">as</span> <span class="dt">BS</span>
+<span class="kw">import qualified</span> <span class="dt">Data.ByteString.Streaming</span> <span class="kw">as</span> <span class="dt">BS</span>
+<span class="kw">import qualified</span> <span class="dt">Control.Foldl</span> <span class="kw">as</span> <span class="dt">L</span>
+<span class="kw">import qualified</span> <span class="dt">Data.ByteString.Streaming.Char8</span> <span class="kw">as</span> <span class="dt">C</span>
+<span class="kw">import </span><span class="dt">Data.Text</span> <span class="kw">as</span> <span class="dt">Text</span>
+<span class="kw">import </span><span class="dt">Data.ByteString.Char8</span> <span class="kw">as</span> <span class="dt">BSC</span></code></pre></div>
+<h2 id="code">code</h2>
+<ul class="incremental">
+<li><a href="https://www.stackage.org/package/hoogle">hoogle</a></li>
+</ul>
+<div class="sourceCode"><pre class="sourceCode literate haskell"><code class="sourceCode haskell"><span class="kw">data</span> <span class="dt">Opts</span> w <span class="fu">=</span> <span class="dt">Opts</span>
+    {<span class="ot"> number ::</span> w <span class="ot">::</span><span class="fu">:</span> <span class="dt">Maybe</span> <span class="dt">Integer</span> <span class="fu">&lt;?&gt;</span> <span class="st">&quot;The number you want to product to&quot;</span>
+    }
+    <span class="kw">deriving</span> (<span class="dt">Generic</span>)
+
+<span class="kw">instance</span> <span class="dt">ParseRecord</span> (<span class="dt">Opts</span> <span class="dt">Wrapped</span>)
+
+
+<span class="ot">site ::</span> <span class="dt">GHC.Base.String</span>
+site <span class="fu">=</span> <span class="st">&quot;http://www.gutenberg.org/files/4300/4300-0.txt&quot;</span>
+
+
+<span class="co">-- t1 :: IO (S.Response (ByteString IO ()))</span>
+
+<span class="ot">t1 ::</span> (<span class="dt">BS.ByteString</span> <span class="dt">IO</span> () <span class="ot">-&gt;</span> <span class="dt">IO</span> a) <span class="ot">-&gt;</span> <span class="dt">IO</span> a
+t1 f <span class="fu">=</span> <span class="kw">do</span>
+  req <span class="ot">&lt;-</span> BS.parseRequest site
+  m <span class="ot">&lt;-</span> BS.newManager BS.tlsManagerSettings 
+  BS.withHTTP req m <span class="fu">$</span> \resp <span class="ot">-&gt;</span> f (BS.responseBody resp)
+
+<span class="co">-- t2 :: BS.ByteString IO () -&gt; IO [Word8]</span>
+<span class="ot">t2 ::</span> <span class="dt">S.Stream</span> (<span class="dt">S.Of</span> a) <span class="dt">IO</span> r <span class="ot">-&gt;</span> <span class="dt">IO</span> (<span class="dt">S.Of</span> [a] r)
+t2 <span class="fu">=</span> L.purely S.fold L.list
+
+<span class="ot">t3 ::</span> (<span class="dt">MonadIO</span> m) <span class="ot">=&gt;</span> <span class="dt">Int64</span> <span class="ot">-&gt;</span> <span class="dt">BS.ByteString</span> m () <span class="ot">-&gt;</span> m ()
+t3 n s <span class="fu">=</span> BS.stdout <span class="fu">$</span> BS.take n <span class="fu">$</span> BS.intercalate (C.singleton <span class="ch">&#39;|&#39;</span>) <span class="fu">$</span> C.denull <span class="fu">$</span> C.words s
+
+
+<span class="co">-- toText = view utf8</span>
+
+<span class="ot">unpunct ::</span> <span class="dt">BSC.ByteString</span> <span class="ot">-&gt;</span> [<span class="dt">BSC.ByteString</span>]
+unpunct <span class="fu">=</span> BSC.splitWith (not <span class="fu">.</span> (<span class="ot">`Protolude.elem`</span> [<span class="ch">&#39;a&#39;</span><span class="fu">..</span><span class="ch">&#39;z&#39;</span>]))
+
+<span class="co">-- tfile :: IO ()</span>
+<span class="co">-- tfile = BS.runResourceT $ (t3 4) $ C.readFile &quot;other/file/f1.txt&quot;</span>
+
+<span class="ot">main ::</span> <span class="dt">IO</span> ()
+main <span class="fu">=</span> <span class="kw">do</span>
+<span class="ot">    o ::</span> <span class="dt">Opts</span> <span class="dt">Unwrapped</span> <span class="ot">&lt;-</span> unwrapRecord <span class="st">&quot;an example app for readme-lhs&quot;</span>
+    <span class="kw">let</span> n <span class="fu">=</span> fromIntegral <span class="fu">$</span> fromMaybe <span class="dv">100</span> (number o)
+    BS.runResourceT <span class="fu">$</span>
+        BS.stdout <span class="fu">$</span>
+        BS.take n <span class="fu">$</span>
+        BS.concat <span class="fu">$</span>
+        S.maps
+          (BS.intercalate (C.singleton <span class="ch">&#39;|&#39;</span>) <span class="fu">.</span>
+          ((C.splitWith (not <span class="fu">.</span> (<span class="ot">`Protolude.elem`</span> [<span class="ch">&#39;a&#39;</span><span class="fu">..</span><span class="ch">&#39;z&#39;</span>]))))) <span class="fu">$</span>
+        S.take <span class="dv">100</span> <span class="fu">$</span>
+        C.denull <span class="fu">$</span>
+        C.words <span class="fu">$</span>
+        C.readFile <span class="st">&quot;other/files/f1.txt&quot;</span>
+    pure ()
+
+<span class="ot">main2 ::</span> <span class="dt">IO</span> ()
+main2 <span class="fu">=</span> <span class="kw">do</span>
+<span class="ot">    o ::</span> <span class="dt">Opts</span> <span class="dt">Unwrapped</span> <span class="ot">&lt;-</span> unwrapRecord <span class="st">&quot;an example app for readme-lhs&quot;</span>
+    <span class="kw">let</span> n <span class="fu">=</span> fromIntegral <span class="fu">$</span> fromMaybe <span class="dv">100</span> (number o)
+    BS.runResourceT <span class="fu">$</span>
+        BS.stdout <span class="fu">$</span>
+        BS.take n <span class="fu">$</span>
+        BS.intercalate (C.singleton <span class="ch">&#39;|&#39;</span>) <span class="fu">$</span>
+        <span class="co">-- S.each $ S.maps unpunct $</span>
+        C.denull <span class="fu">$</span>
+        C.words <span class="fu">$</span>
+        C.readFile <span class="st">&quot;other/files/f1.txt&quot;</span>
+    pure ()</code></pre></div>
+<h2 id="output">output</h2>
+<h2 id="tests">tests</h2>
+<ul class="incremental">
+<li><a href="https://www.stackage.org/package/doctest">doctest</a></li>
+</ul>
+<div class="sourceCode"><pre class="sourceCode literate haskell"><code class="sourceCode haskell"><span class="co">-- | doctests</span>
+<span class="co">-- &gt;&gt;&gt; 1 == 1</span>
+<span class="co">-- True</span></code></pre></div>
+<hr />
+<div class="footer">
+<p>Powered by <a href="https://haskell-lang.org/">haskell</a>, <a href="https://docs.haskellstack.org/en/stable/README/">stack</a> and <a href="http://pandoc.org/">pandoc</a>.</p>
+</div>

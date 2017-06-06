@@ -1,0 +1,8 @@
+resolver:
+  lts-8.16
+
+packages:
+  - '.'
+
+extra-deps:
+  - json-stream-0.4.1.3
