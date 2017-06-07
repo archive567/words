@@ -3,6 +3,13 @@
   src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-MML-AM_CHTML">
 </script>
 <h1 id="stream-words">stream-words</h1>
+<p>Experiment in word counting using the <a href="https://hackage.haskell.org/package/streaming-0.1.4.5/docs/Streaming.html">streaming</a> library.</p>
+<h2 id="todo">todo</h2>
+<ul class="incremental">
+<li>[ ] https://www.reddit.com/r/haskell/comments/5x2g0r/streaming_package_vs_pipes_conduit_question_on/</li>
+<li>[ ] [streaming-utils](http://hackage.haskell.org/package/streaming-utils)</li>
+<li>[ ] Blast</li>
+</ul>
 <h2 id="ghc-options"><a href="https://downloads.haskell.org/~ghc/latest/docs/html/users_guide/flags.html#flag-reference">ghc options</a></h2>
 <div class="sourceCode"><pre class="sourceCode literate haskell"><code class="sourceCode haskell"><span class="ot">{-# OPTIONS_GHC -Wall #-}</span>
 <span class="ot">{-# OPTIONS_GHC -fno-warn-type-defaults #-}</span></code></pre></div>
@@ -19,6 +26,8 @@
 <ul class="incremental">
 <li><a href="https://www.stackage.org/package/protolude">protolude</a></li>
 <li><a href="https://www.stackage.org/package/optparse-generic">optparse-generic</a></li>
+<li><a href="https://hackage.haskell.org/package/streaming-0.1.4.5/docs/Streaming.html">streaming</a></li>
+<li><a href="http://hackage.haskell.org/package/streaming-bytestring">streaming-bytestring</a></li>
 </ul>
 <div class="sourceCode"><pre class="sourceCode literate haskell"><code class="sourceCode haskell"><span class="kw">import </span><span class="dt">Protolude</span>
 <span class="kw">import </span><span class="dt">GHC.Base</span> (<span class="dt">String</span>)
@@ -26,11 +35,12 @@
 <span class="kw">import qualified</span> <span class="dt">Streaming</span> <span class="kw">as</span> <span class="dt">S</span>
 <span class="kw">import qualified</span> <span class="dt">Streaming.Prelude</span> <span class="kw">as</span> <span class="dt">S</span>
 <span class="kw">import qualified</span> <span class="dt">Data.ByteString.Streaming.HTTP</span> <span class="kw">as</span> <span class="dt">BS</span>
-<span class="kw">import qualified</span> <span class="dt">Data.ByteString.Streaming</span> <span class="kw">as</span> <span class="dt">BS</span>
+<span class="co">-- import qualified Data.ByteString.Streaming as BS</span>
 <span class="kw">import qualified</span> <span class="dt">Control.Foldl</span> <span class="kw">as</span> <span class="dt">L</span>
 <span class="kw">import qualified</span> <span class="dt">Data.ByteString.Streaming.Char8</span> <span class="kw">as</span> <span class="dt">C</span>
 <span class="kw">import </span><span class="dt">Data.Text</span> <span class="kw">as</span> <span class="dt">Text</span>
-<span class="kw">import </span><span class="dt">Data.ByteString.Char8</span> <span class="kw">as</span> <span class="dt">BSC</span></code></pre></div>
+<span class="co">-- import Data.ByteString.Char8 as BSC</span>
+<span class="kw">import qualified</span> <span class="dt">Data.Map</span> <span class="kw">as</span> <span class="dt">Map</span></code></pre></div>
 <h2 id="code">code</h2>
 <ul class="incremental">
 <li><a href="https://www.stackage.org/package/hoogle">hoogle</a></li>
@@ -42,65 +52,65 @@
 
 <span class="kw">instance</span> <span class="dt">ParseRecord</span> (<span class="dt">Opts</span> <span class="dt">Wrapped</span>)
 
-
 <span class="ot">site ::</span> <span class="dt">GHC.Base.String</span>
 site <span class="fu">=</span> <span class="st">&quot;http://www.gutenberg.org/files/4300/4300-0.txt&quot;</span>
 
-
-<span class="co">-- t1 :: IO (S.Response (ByteString IO ()))</span>
-
-<span class="ot">t1 ::</span> (<span class="dt">BS.ByteString</span> <span class="dt">IO</span> () <span class="ot">-&gt;</span> <span class="dt">IO</span> a) <span class="ot">-&gt;</span> <span class="dt">IO</span> a
-t1 f <span class="fu">=</span> <span class="kw">do</span>
-  req <span class="ot">&lt;-</span> BS.parseRequest site
-  m <span class="ot">&lt;-</span> BS.newManager BS.tlsManagerSettings 
-  BS.withHTTP req m <span class="fu">$</span> \resp <span class="ot">-&gt;</span> f (BS.responseBody resp)
-
-<span class="co">-- t2 :: BS.ByteString IO () -&gt; IO [Word8]</span>
-<span class="ot">t2 ::</span> <span class="dt">S.Stream</span> (<span class="dt">S.Of</span> a) <span class="dt">IO</span> r <span class="ot">-&gt;</span> <span class="dt">IO</span> (<span class="dt">S.Of</span> [a] r)
-t2 <span class="fu">=</span> L.purely S.fold L.list
-
-<span class="ot">t3 ::</span> (<span class="dt">MonadIO</span> m) <span class="ot">=&gt;</span> <span class="dt">Int64</span> <span class="ot">-&gt;</span> <span class="dt">BS.ByteString</span> m () <span class="ot">-&gt;</span> m ()
-t3 n s <span class="fu">=</span> BS.stdout <span class="fu">$</span> BS.take n <span class="fu">$</span> BS.intercalate (C.singleton <span class="ch">&#39;|&#39;</span>) <span class="fu">$</span> C.denull <span class="fu">$</span> C.words s
+<span class="ot">(&gt;&gt;&gt;) ::</span> (a <span class="ot">-&gt;</span> b) <span class="ot">-&gt;</span> (b <span class="ot">-&gt;</span> c) <span class="ot">-&gt;</span> a <span class="ot">-&gt;</span> c
+(<span class="fu">&gt;&gt;&gt;</span>) <span class="fu">=</span> flip (<span class="fu">.</span>)
 
 
-<span class="co">-- toText = view utf8</span>
 
-<span class="ot">unpunct ::</span> <span class="dt">BSC.ByteString</span> <span class="ot">-&gt;</span> [<span class="dt">BSC.ByteString</span>]
-unpunct <span class="fu">=</span> BSC.splitWith (not <span class="fu">.</span> (<span class="ot">`Protolude.elem`</span> [<span class="ch">&#39;a&#39;</span><span class="fu">..</span><span class="ch">&#39;z&#39;</span>]))
+<span class="ot">wordStream ::</span> <span class="dt">Monad</span> m <span class="ot">=&gt;</span> <span class="dt">Int</span> <span class="ot">-&gt;</span> <span class="dt">C.ByteString</span> m r <span class="ot">-&gt;</span> <span class="dt">S.Stream</span> (<span class="dt">S.Of</span> <span class="dt">Text</span>) m ()
+wordStream n s <span class="fu">=</span>
+    s  <span class="fu">&amp;</span>
+    C.words <span class="fu">&amp;</span>
+    C.denull <span class="fu">&amp;</span>
+    S.take n <span class="fu">&amp;</span>
+    S.mapped C.toStrict <span class="fu">&amp;</span>
+    S.map ( decodeUtf8 <span class="fu">&gt;&gt;&gt;</span>
+            toLower <span class="fu">&gt;&gt;&gt;</span>
+            Text.split (not <span class="fu">.</span> (<span class="ot">`Protolude.elem`</span> [<span class="ch">&#39;a&#39;</span><span class="fu">..</span><span class="ch">&#39;z&#39;</span>]))) <span class="fu">&amp;</span>
+    S.concat <span class="fu">&amp;</span>
+    S.filter (<span class="fu">/=</span><span class="st">&quot;&quot;</span>)
 
-<span class="co">-- tfile :: IO ()</span>
-<span class="co">-- tfile = BS.runResourceT $ (t3 4) $ C.readFile &quot;other/file/f1.txt&quot;</span>
+<span class="ot">fwords ::</span> <span class="dt">L.Fold</span> <span class="dt">Text</span> (<span class="dt">Map</span> <span class="dt">Text</span> <span class="dt">Int</span>)
+fwords <span class="fu">=</span> <span class="dt">L.Fold</span> step Map.empty identity
+  <span class="kw">where</span>
+    step x a <span class="fu">=</span> Map.insertWith (<span class="fu">+</span>) a <span class="dv">1</span> x
 
+<span class="ot">faves ::</span> <span class="dt">Int</span> <span class="ot">-&gt;</span> <span class="dt">Map</span> <span class="dt">Text</span> <span class="dt">Int</span> <span class="ot">-&gt;</span> [(<span class="dt">Text</span>,<span class="dt">Int</span>)]
+faves n <span class="fu">=</span>
+    Protolude.take n <span class="fu">.</span>
+    sortBy (\(_,x) (_,y) <span class="ot">-&gt;</span> compare y x) <span class="fu">.</span>
+    Map.toList
+
+<span class="ot">httpWords ::</span> <span class="dt">String</span> <span class="ot">-&gt;</span> <span class="dt">IO</span> (<span class="dt">Map</span> <span class="dt">Text</span> <span class="dt">Int</span>)
+httpWords f <span class="fu">=</span> <span class="kw">do</span>
+    req <span class="ot">&lt;-</span> BS.parseRequest f
+    man <span class="ot">&lt;-</span> BS.newManager BS.tlsManagerSettings
+    BS.withHTTP req man <span class="fu">$</span> \resp <span class="ot">-&gt;</span>
+        L.purely S.fold_ fwords (void <span class="fu">$</span> wordStream <span class="dv">1000</span> (BS.responseBody resp))
+
+<span class="ot">mkTable ::</span> [(<span class="dt">Text</span>,<span class="dt">Int</span>)] <span class="ot">-&gt;</span> <span class="dt">Text</span>
+mkTable ws <span class="fu">=</span> h <span class="fu">&lt;&gt;</span> sep <span class="fu">&lt;&gt;</span> b <span class="fu">&lt;&gt;</span> sep <span class="fu">&lt;&gt;</span> t
+  <span class="kw">where</span>
+    sep <span class="fu">=</span> <span class="st">&quot;\n&quot;</span>
+    h <span class="fu">=</span> <span class="st">&quot;\n&lt;table&gt;&quot;</span>
+    t <span class="fu">=</span> <span class="st">&quot;&lt;/table&gt;&quot;</span>
+    b <span class="fu">=</span> Text.concat
+        ((\x <span class="ot">-&gt;</span> <span class="st">&quot;&lt;tr&gt;\n&quot;</span> <span class="fu">&lt;&gt;</span> x <span class="fu">&lt;&gt;</span> <span class="st">&quot;\n&lt;/tr&gt;\n&quot;</span>) <span class="fu">.</span>
+          (\(w,n) <span class="ot">-&gt;</span> <span class="st">&quot;&lt;th&gt;&quot;</span> <span class="fu">&lt;&gt;</span> w <span class="fu">&lt;&gt;</span> <span class="st">&quot;&lt;/th&gt;\n&quot;</span> <span class="fu">&lt;&gt;</span> <span class="st">&quot;&lt;th&gt;\n&quot;</span> <span class="fu">&lt;&gt;</span>
+            show n <span class="fu">&lt;&gt;</span> <span class="st">&quot;\n&lt;/th&gt;\n&quot;</span>) <span class="fu">&lt;$&gt;</span> ws)
 <span class="ot">main ::</span> <span class="dt">IO</span> ()
 main <span class="fu">=</span> <span class="kw">do</span>
-<span class="ot">    o ::</span> <span class="dt">Opts</span> <span class="dt">Unwrapped</span> <span class="ot">&lt;-</span> unwrapRecord <span class="st">&quot;an example app for readme-lhs&quot;</span>
-    <span class="kw">let</span> n <span class="fu">=</span> fromIntegral <span class="fu">$</span> fromMaybe <span class="dv">100</span> (number o)
-    BS.runResourceT <span class="fu">$</span>
-        BS.stdout <span class="fu">$</span>
-        BS.take n <span class="fu">$</span>
-        BS.concat <span class="fu">$</span>
-        S.maps
-          (BS.intercalate (C.singleton <span class="ch">&#39;|&#39;</span>) <span class="fu">.</span>
-          ((C.splitWith (not <span class="fu">.</span> (<span class="ot">`Protolude.elem`</span> [<span class="ch">&#39;a&#39;</span><span class="fu">..</span><span class="ch">&#39;z&#39;</span>]))))) <span class="fu">$</span>
-        S.take <span class="dv">100</span> <span class="fu">$</span>
-        C.denull <span class="fu">$</span>
-        C.words <span class="fu">$</span>
-        C.readFile <span class="st">&quot;other/files/f1.txt&quot;</span>
-    pure ()
-
-<span class="ot">main2 ::</span> <span class="dt">IO</span> ()
-main2 <span class="fu">=</span> <span class="kw">do</span>
-<span class="ot">    o ::</span> <span class="dt">Opts</span> <span class="dt">Unwrapped</span> <span class="ot">&lt;-</span> unwrapRecord <span class="st">&quot;an example app for readme-lhs&quot;</span>
-    <span class="kw">let</span> n <span class="fu">=</span> fromIntegral <span class="fu">$</span> fromMaybe <span class="dv">100</span> (number o)
-    BS.runResourceT <span class="fu">$</span>
-        BS.stdout <span class="fu">$</span>
-        BS.take n <span class="fu">$</span>
-        BS.intercalate (C.singleton <span class="ch">&#39;|&#39;</span>) <span class="fu">$</span>
-        <span class="co">-- S.each $ S.maps unpunct $</span>
-        C.denull <span class="fu">$</span>
-        C.words <span class="fu">$</span>
-        C.readFile <span class="st">&quot;other/files/f1.txt&quot;</span>
-    pure ()</code></pre></div>
+    <span class="co">-- ws &lt;- httpWords &quot;http://www.gutenberg.org/files/4300/4300-0.txt&quot;</span>
+    <span class="kw">let</span> tFile <span class="fu">=</span> <span class="st">&quot;other/files/f1.txt&quot;</span>
+    Protolude.putStrLn (<span class="st">&quot;Top 100 words being calced ...&quot;</span><span class="ot"> ::</span> <span class="dt">Text</span>)
+    ws <span class="ot">&lt;-</span> fmap (faves <span class="dv">100</span>) <span class="fu">$</span>
+        L.purely S.fold_ fwords (wordStream <span class="dv">10000</span> (C.readFile tFile)) <span class="fu">&amp;</span> BS.runResourceT
+    print ws
+    Protolude.writeFile <span class="st">&quot;other/table.md&quot;</span> <span class="fu">$</span>
+      mkTable ws</code></pre></div>
 <h2 id="output">output</h2>
 <h2 id="tests">tests</h2>
 <ul class="incremental">

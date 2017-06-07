@@ -90,6 +90,7 @@ executable stream-words-example
     base >= 4.7 && < 5,
     protolude,
     optparse-generic,
+    data-default,
     json-stream,
     streaming,
     streaming-bytestring,
