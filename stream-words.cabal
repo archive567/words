@@ -91,7 +91,6 @@ executable stream-words-example
     protolude,
     optparse-generic,
     data-default,
-    json-stream,
     streaming,
     streaming-bytestring,
     streaming-utils,

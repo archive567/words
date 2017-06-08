@@ -75,13 +75,14 @@ code
 data TableFormat = TableHtml | Plain deriving (Read, Show, Generic)
 data Source = FileIn String | UrlIn String deriving (Read, Show, Generic)
 data Destination = FileOut String | ToStdout deriving (Read, Show, Generic)
-data Destinations = Destinations [(Destination, TableFormat)] deriving (Read, Show, Generic)
+data Output = Output Destination TableFormat deriving (Read, Show, Generic)
+data Destinations = Destinations [Output] deriving (Read, Show, Generic)
 
 data Opts w =
     Opts
     { source :: w ::: Maybe Source <?> "local file or url?"
     , topn :: w ::: Maybe Int <?> "Top n word counts"
-    , destinations :: w ::: Destinations <?> "output locations and format"
+    , destinations :: w ::: Maybe Destinations <?> "output locations and format"
     }
     deriving (Generic)
 
@@ -92,17 +93,28 @@ defUrl :: Source
 defUrl = UrlIn "http://www.gutenberg.org/files/4300/4300-0.txt"
 
 instance Default Destinations where
-    def = Destinations [(FileOut "other/table.md", TableHtml), (ToStdout, Plain)]
+    def = Destinations [Output (FileOut "other/table.md") TableHtml, Output ToStdout Plain]
 
-instance Default (Opts w) where
-    def = Opts (Just def) 10 (Just True) def
+-- instance Default (Opts w) where
+--    def = Opts (Just def) (Just 10) (Just def)
 
 instance ParseField Source
 instance ParseRecord Source
+
 instance ParseField Destination
+instance ParseFields Destination
 instance ParseRecord Destination
+
+instance ParseField TableFormat
+instance ParseFields TableFormat
+instance ParseRecord TableFormat
+
+instance ParseField Output
+instance ParseRecord Output
+
 instance ParseField Destinations
 instance ParseRecord Destinations
+
 instance ParseRecord (Opts Wrapped)
 
 (>>>) :: (a -> b) -> (b -> c) -> a -> c
@@ -158,17 +170,20 @@ runFaves n s =
 main :: IO ()
 main = do
     o :: Opts Unwrapped <- unwrapRecord "counting words, haskell style"
-    let n = fromMaybe 10 (number o)
+    let n = fromMaybe 10 (topn o)
     let input = fromMaybe def (source o)
-    let output = fromMaybe def (destinations o)
+    let outputs = fromMaybe def (destinations o)
     Protolude.putStrLn ("Top " <> show n <> " word counts ..." :: Text)
-    ws <- runFaves n (C.readFile tFile)
-    fmap doOutput output ws
+    ws <- case input of
+      FileIn f -> runFaves n (C.readFile f)
+      UrlIn u -> fmap (faves n) (fromUrl u)
+    sequence_ $ fmap ((\x -> x ws) . doOutput) ((\(Destinations xs) -> xs) outputs)
       where
-        doOutput (ToStdout, Plain) = Protolude.putStrLn . show
-        doOutput (ToStdout, TableHtml) = Protolude.putStrLn . mkTable
-        doOutput (FileOut f, Plain) = Protolude.writeFile f . show
-        doOutput (FileOut f, TableHtml) = Protolude.writeFile f . mkTable
+        doOutput :: Output -> [(Text,Int)] -> IO ()
+        doOutput (Output ToStdout Plain) = (Protolude.putStrLn . (show :: [(Text,Int)] -> Text))
+        doOutput (Output ToStdout TableHtml) = Protolude.putStrLn . mkTable
+        doOutput (Output (FileOut f) Plain) = Protolude.writeFile f . show
+        doOutput (Output (FileOut f) TableHtml) = Protolude.writeFile f . mkTable
 
 \end{code}
 
