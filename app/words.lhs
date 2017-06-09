@@ -2,18 +2,24 @@
 other/header.md
 ```
 
-stream-words
+words
 ===
 
-Experiment in word counting using the [streaming](https://hackage.haskell.org/package/streaming-0.1.4.5/docs/Streaming.html) library.
+This is a test bed for word counting.  It currently includes:
 
+- some literate programming style experiments.
+- optparse-generic style app design
+- using the [streaming](https://hackage.haskell.org/package/streaming-0.1.4.5/docs/Streaming.html) library.
+
+
+Next stage of development (if any) will be to look at remote computing and map-reduce haskell-style.
 
 todo
 ---
 
-- [ ] https://www.reddit.com/r/haskell/comments/5x2g0r/streaming_package_vs_pipes_conduit_question_on/
-- [ ] [streaming-utils](http://hackage.haskell.org/package/streaming-utils)
-- [ ] Blast
+- [ ] performance testing
+  See [this](https://www.reddit.com/r/haskell/comments/5x2g0r/streaming_package_vs_pipes_conduit_question_on/) reddit conversation
+- [ ] try out [Blast](https://github.com/jcmincke/Blast)
 
 
 [ghc options](https://downloads.haskell.org/~ghc/latest/docs/html/users_guide/flags.html#flag-reference)
@@ -28,7 +34,6 @@ todo
 ---
 
 \begin{code}
--- doctest doesn't look at the cabal file, so you need pragmas here
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DataKinds #-}
@@ -47,20 +52,18 @@ todo
 - [streaming-bytestring](http://hackage.haskell.org/package/streaming-bytestring)
 
 \begin{code}
-import Protolude
+import Data.Default
+import Data.Text as Text
 import GHC.Base (String)
 import Options.Generic
-import Data.Default
+import Protolude
 
+import qualified Control.Foldl as L
+import qualified Data.ByteString.Streaming.Char8 as B
+import qualified Data.ByteString.Streaming.HTTP as HTTP
+import qualified Data.Map as Map
 import qualified Streaming as S
 import qualified Streaming.Prelude as S
-import qualified Data.ByteString.Streaming.HTTP as BS
--- import qualified Data.ByteString.Streaming as BS
-import qualified Control.Foldl as L
-import qualified Data.ByteString.Streaming.Char8 as C
-import Data.Text as Text
--- import Data.ByteString.Char8 as BSC
-import qualified Data.Map as Map
 
 \end{code}
 
@@ -70,87 +73,97 @@ code
 - [hoogle](https://www.stackage.org/package/hoogle)
 
 \begin{code}
+data Input = FileIn String | UrlIn String
+    deriving (Read, Show, Generic)
 
+instance ParseField Input
+instance ParseRecord Input
 
-data TableFormat = TableHtml | Plain deriving (Read, Show, Generic)
-data Source = FileIn String | UrlIn String deriving (Read, Show, Generic)
-data Destination = FileOut String | ToStdout deriving (Read, Show, Generic)
-data Output = Output Destination TableFormat deriving (Read, Show, Generic)
-data Destinations = Destinations [Output] deriving (Read, Show, Generic)
+instance Default Input where
+    def = FileIn "other/fake.txt"
+    -- defUrl = UrlIn "http://www.gutenberg.org/files/4300/4300-0.txt"
 
-data Opts w =
-    Opts
-    { source :: w ::: Maybe Source <?> "local file or url?"
-    , topn :: w ::: Maybe Int <?> "Top n word counts"
-    , destinations :: w ::: Maybe Destinations <?> "output locations and format"
-    }
-    deriving (Generic)
+data Sink = FileOut String | ToStdout
+    deriving (Read, Show, Generic)
 
-instance Default Source where
-    def = FileIn "other/files/f1.txt"
+instance ParseField Sink
+instance ParseFields Sink
+instance ParseRecord Sink
 
-defUrl :: Source
-defUrl = UrlIn "http://www.gutenberg.org/files/4300/4300-0.txt"
-
-instance Default Destinations where
-    def = Destinations [Output (FileOut "other/table.md") TableHtml, Output ToStdout Plain]
-
--- instance Default (Opts w) where
---    def = Opts (Just def) (Just 10) (Just def)
-
-instance ParseField Source
-instance ParseRecord Source
-
-instance ParseField Destination
-instance ParseFields Destination
-instance ParseRecord Destination
+data TableFormat = TableHtml | Plain
+    deriving (Read, Show, Generic)
 
 instance ParseField TableFormat
 instance ParseFields TableFormat
 instance ParseRecord TableFormat
 
+data Output = Output Sink TableFormat
+    deriving (Read, Show, Generic)
+
 instance ParseField Output
 instance ParseRecord Output
 
-instance ParseField Destinations
-instance ParseRecord Destinations
+data Outputs = Outputs [Output]
+    deriving (Read, Show, Generic)
+
+instance ParseField Outputs
+instance ParseRecord Outputs
+
+instance Default Outputs where
+    def = Outputs
+          [ Output (FileOut "other/table.md") TableHtml
+          , Output ToStdout Plain
+          ]
+
+data Opts w =
+    Opts
+    { input :: w ::: Maybe Input <?> "input source - local file or url?"
+    , topn :: w ::: Maybe Int <?> "Top n word counts"
+    , outputs :: w ::: Maybe Outputs <?> "output locations and format"
+    }
+    deriving (Generic)
 
 instance ParseRecord (Opts Wrapped)
 
 (>>>) :: (a -> b) -> (b -> c) -> a -> c
 (>>>) = flip (.)
 
-wordStream :: Monad m => Int -> C.ByteString m r -> S.Stream (S.Of Text) m ()
+-- | take a ByteString (A streaming library bytestring) and make a text word stream
+wordStream :: Monad m => Int -> B.ByteString m r -> S.Stream (S.Of Text) m ()
 wordStream n s =
     s &
-    C.words &
-    C.denull &
+    B.words &
+    B.denull &
     S.take n &
-    S.mapped C.toStrict &
+    S.mapped B.toStrict & -- the strict wall of pain
     S.map ( decodeUtf8 >>>
             toLower >>>
             Text.split (not . (`Protolude.elem` ['a'..'z']))) &
     S.concat &
     S.filter (/="")
 
-fwords :: L.Fold Text (Map Text Int)
-fwords = L.Fold step Map.empty identity
+-- | map count of unique words
+wordCount :: L.Fold Text (Map Text Int)
+wordCount = L.Fold step Map.empty identity
   where
     step x a = Map.insertWith (+) a 1 x
 
+-- | top n word counts
 faves :: Int -> Map Text Int -> [(Text,Int)]
 faves n =
     Protolude.take n .
     sortBy (\(_,x) (_,y) -> compare y x) .
     Map.toList
 
+-- | refactor me
 fromUrl :: String -> IO (Map Text Int)
 fromUrl f = do
-    req <- BS.parseRequest f
-    man <- BS.newManager BS.tlsManagerSettings
-    BS.withHTTP req man $ \resp ->
-        L.purely S.fold_ fwords (void $ wordStream 1000 (BS.responseBody resp))
+    req <- HTTP.parseRequest f
+    man <- HTTP.newManager HTTP.tlsManagerSettings
+    HTTP.withHTTP req man $ \resp ->
+        L.purely S.fold_ wordCount (void $ wordStream 1000 (HTTP.responseBody resp))
 
+-- | create a html table format from the word counts
 mkTable :: [(Text,Int)] -> Text
 mkTable ws = h <> sep <> b <> sep <> t
   where
@@ -162,22 +175,23 @@ mkTable ws = h <> sep <> b <> sep <> t
           (\(w,n) -> "<th>" <> w <> "</th>\n" <> "<th>\n" <>
             show n <> "\n</th>\n") <$> ws)
 
-runFaves :: Int -> C.ByteString (BS.ResourceT IO) () -> IO [(Text, Int)]
+-- | refactor me
+runFaves :: Int -> B.ByteString (S.ResourceT IO) () -> IO [(Text, Int)]
 runFaves n s =
     fmap (faves n) $
-    L.purely S.fold_ fwords (wordStream 10000 s) & BS.runResourceT
+    L.purely S.fold_ wordCount (wordStream 10000 s) & S.runResourceT
 
 main :: IO ()
 main = do
-    o :: Opts Unwrapped <- unwrapRecord "counting words, haskell style"
-    let n = fromMaybe 10 (topn o)
-    let input = fromMaybe def (source o)
-    let outputs = fromMaybe def (destinations o)
+    opts :: Opts Unwrapped <- unwrapRecord "counting words, haskell style"
+    let n = fromMaybe 10 (topn opts)
+    let i = fromMaybe def (input opts)
+    let os = fromMaybe def (outputs opts)
     Protolude.putStrLn ("Top " <> show n <> " word counts ..." :: Text)
-    ws <- case input of
-      FileIn f -> runFaves n (C.readFile f)
+    ws <- case i of
+      FileIn f -> runFaves n (B.readFile f)
       UrlIn u -> fmap (faves n) (fromUrl u)
-    sequence_ $ fmap ((\x -> x ws) . doOutput) ((\(Destinations xs) -> xs) outputs)
+    sequence_ $ fmap ((\x -> x ws) . doOutput) ((\(Outputs xs) -> xs) os)
       where
         doOutput :: Output -> [(Text,Int)] -> IO ()
         doOutput (Output ToStdout Plain) = (Protolude.putStrLn . (show :: [(Text,Int)] -> Text))
@@ -188,10 +202,10 @@ main = do
 \end{code}
 
 output
----
+===
 
 ```include
-other/answer.md
+other/table.md
 ```
 
 tests
@@ -201,7 +215,7 @@ tests
 
 \begin{code}
 -- | doctests
--- >>> let tFile = "other/files/f1.txt"
+-- >>> let tFile = "other/fake.txt"
 -- >>> ws <- runFaves 10 (C.readFile tFile)
 -- [("et",182),("in",113),("est",70),("se",65),("ad",64),("ut",57),("numquam",50),("ne",45),("quod",44),("non",39)]
 \end{code}
