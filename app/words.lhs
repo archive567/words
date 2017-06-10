@@ -216,7 +216,8 @@ tests
 \begin{code}
 -- | doctests
 -- >>> let tFile = "other/fake.txt"
--- >>> ws <- runFaves 10 (C.readFile tFile)
+-- >>> ws <- runFaves 10 (B.readFile tFile)
+-- >>> ws
 -- [("et",182),("in",113),("est",70),("se",65),("ad",64),("ut",57),("numquam",50),("ne",45),("quod",44),("non",39)]
 \end{code}
 
