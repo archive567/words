@@ -155,14 +155,6 @@ faves n =
     sortBy (\(_,x) (_,y) -> compare y x) .
     Map.toList
 
--- | refactor me
-fromUrl :: String -> IO (Map Text Int)
-fromUrl f = do
-    req <- HTTP.parseRequest f
-    man <- HTTP.newManager HTTP.tlsManagerSettings
-    HTTP.withHTTP req man $ \resp ->
-        L.purely S.fold_ wordCount (void $ wordStream 1000 (HTTP.responseBody resp))
-
 -- | create a html table format from the word counts
 mkTable :: [(Text,Int)] -> Text
 mkTable ws = h <> sep <> b <> sep <> t
@@ -175,11 +167,20 @@ mkTable ws = h <> sep <> b <> sep <> t
           (\(w,n) -> "<th>" <> w <> "</th>\n" <> "<th>\n" <>
             show n <> "\n</th>\n") <$> ws)
 
--- | refactor me
-runFaves :: Int -> B.ByteString (S.ResourceT IO) () -> IO [(Text, Int)]
-runFaves n s =
-    fmap (faves n) $
-    L.purely S.fold_ wordCount (wordStream 10000 s) & S.runResourceT
+-- | fold that counts words from a streaming bytestring
+foldWords :: Monad m => B.ByteString m r -> m (Map Text Int)
+foldWords s = L.purely S.fold_ wordCount (wordStream 10000 s)
+
+-- | run an url stream
+fromUrl :: String -> IO (Map Text Int)
+fromUrl f = do
+    req <- HTTP.parseRequest f
+    man <- HTTP.newManager HTTP.tlsManagerSettings
+    HTTP.withHTTP req man $ \resp -> foldWords (HTTP.responseBody resp)
+
+-- | run a file stream
+fromFile :: FilePath -> IO (Map Text Int)
+fromFile f = S.runResourceT (foldWords (B.readFile f))
 
 main :: IO ()
 main = do
@@ -189,12 +190,12 @@ main = do
     let os = fromMaybe def (outputs opts)
     Protolude.putStrLn ("Top " <> show n <> " word counts ..." :: Text)
     ws <- case i of
-      FileIn f -> runFaves n (B.readFile f)
-      UrlIn u -> fmap (faves n) (fromUrl u)
+      FileIn f ->  faves n <$> fromFile f
+      UrlIn u -> faves n <$> fromUrl u
     sequence_ $ fmap ((\x -> x ws) . doOutput) ((\(Outputs xs) -> xs) os)
       where
         doOutput :: Output -> [(Text,Int)] -> IO ()
-        doOutput (Output ToStdout Plain) = (Protolude.putStrLn . (show :: [(Text,Int)] -> Text))
+        doOutput (Output ToStdout Plain) = Protolude.putStrLn . (show :: [(Text,Int)] -> Text)
         doOutput (Output ToStdout TableHtml) = Protolude.putStrLn . mkTable
         doOutput (Output (FileOut f) Plain) = Protolude.writeFile f . show
         doOutput (Output (FileOut f) TableHtml) = Protolude.writeFile f . mkTable
@@ -215,9 +216,7 @@ tests
 
 \begin{code}
 -- | doctests
--- >>> let tFile = "other/fake.txt"
--- >>> ws <- runFaves 10 (B.readFile tFile)
--- >>> ws
+-- >>> faves 10 <$> fromFile "other/fake.txt"
 -- [("et",182),("in",113),("est",70),("se",65),("ad",64),("ut",57),("numquam",50),("ne",45),("quod",44),("non",39)]
 \end{code}
 

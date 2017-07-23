@@ -131,14 +131,6 @@ faves n <span class="fu">=</span>
     sortBy (\(_,x) (_,y) <span class="ot">-&gt;</span> compare y x) <span class="fu">.</span>
     Map.toList
 
-<span class="co">-- | refactor me</span>
-<span class="ot">fromUrl ::</span> <span class="dt">String</span> <span class="ot">-&gt;</span> <span class="dt">IO</span> (<span class="dt">Map</span> <span class="dt">Text</span> <span class="dt">Int</span>)
-fromUrl f <span class="fu">=</span> <span class="kw">do</span>
-    req <span class="ot">&lt;-</span> HTTP.parseRequest f
-    man <span class="ot">&lt;-</span> HTTP.newManager HTTP.tlsManagerSettings
-    HTTP.withHTTP req man <span class="fu">$</span> \resp <span class="ot">-&gt;</span>
-        L.purely S.fold_ wordCount (void <span class="fu">$</span> wordStream <span class="dv">1000</span> (HTTP.responseBody resp))
-
 <span class="co">-- | create a html table format from the word counts</span>
 <span class="ot">mkTable ::</span> [(<span class="dt">Text</span>,<span class="dt">Int</span>)] <span class="ot">-&gt;</span> <span class="dt">Text</span>
 mkTable ws <span class="fu">=</span> h <span class="fu">&lt;&gt;</span> sep <span class="fu">&lt;&gt;</span> b <span class="fu">&lt;&gt;</span> sep <span class="fu">&lt;&gt;</span> t
@@ -151,11 +143,20 @@ mkTable ws <span class="fu">=</span> h <span class="fu">&lt;&gt;</span> sep <spa
           (\(w,n) <span class="ot">-&gt;</span> <span class="st">&quot;&lt;th&gt;&quot;</span> <span class="fu">&lt;&gt;</span> w <span class="fu">&lt;&gt;</span> <span class="st">&quot;&lt;/th&gt;\n&quot;</span> <span class="fu">&lt;&gt;</span> <span class="st">&quot;&lt;th&gt;\n&quot;</span> <span class="fu">&lt;&gt;</span>
             show n <span class="fu">&lt;&gt;</span> <span class="st">&quot;\n&lt;/th&gt;\n&quot;</span>) <span class="fu">&lt;$&gt;</span> ws)
 
-<span class="co">-- | refactor me</span>
-<span class="ot">runFaves ::</span> <span class="dt">Int</span> <span class="ot">-&gt;</span> <span class="dt">B.ByteString</span> (<span class="dt">S.ResourceT</span> <span class="dt">IO</span>) () <span class="ot">-&gt;</span> <span class="dt">IO</span> [(<span class="dt">Text</span>, <span class="dt">Int</span>)]
-runFaves n s <span class="fu">=</span>
-    fmap (faves n) <span class="fu">$</span>
-    L.purely S.fold_ wordCount (wordStream <span class="dv">10000</span> s) <span class="fu">&amp;</span> S.runResourceT
+<span class="co">-- | fold that counts words from a streaming bytestring</span>
+<span class="ot">foldWords ::</span> <span class="dt">Monad</span> m <span class="ot">=&gt;</span> <span class="dt">B.ByteString</span> m r <span class="ot">-&gt;</span> m (<span class="dt">Map</span> <span class="dt">Text</span> <span class="dt">Int</span>)
+foldWords s <span class="fu">=</span> L.purely S.fold_ wordCount (wordStream <span class="dv">10000</span> s)
+
+<span class="co">-- | run an url stream</span>
+<span class="ot">fromUrl ::</span> <span class="dt">String</span> <span class="ot">-&gt;</span> <span class="dt">IO</span> (<span class="dt">Map</span> <span class="dt">Text</span> <span class="dt">Int</span>)
+fromUrl f <span class="fu">=</span> <span class="kw">do</span>
+    req <span class="ot">&lt;-</span> HTTP.parseRequest f
+    man <span class="ot">&lt;-</span> HTTP.newManager HTTP.tlsManagerSettings
+    HTTP.withHTTP req man <span class="fu">$</span> \resp <span class="ot">-&gt;</span> foldWords (HTTP.responseBody resp)
+
+<span class="co">-- | run a file stream</span>
+<span class="ot">fromFile ::</span> FilePath <span class="ot">-&gt;</span> <span class="dt">IO</span> (<span class="dt">Map</span> <span class="dt">Text</span> <span class="dt">Int</span>)
+fromFile f <span class="fu">=</span> S.runResourceT (foldWords (B.readFile f))
 
 <span class="ot">main ::</span> <span class="dt">IO</span> ()
 main <span class="fu">=</span> <span class="kw">do</span>
@@ -165,12 +166,12 @@ main <span class="fu">=</span> <span class="kw">do</span>
     <span class="kw">let</span> os <span class="fu">=</span> fromMaybe def (outputs opts)
     Protolude.putStrLn (<span class="st">&quot;Top &quot;</span> <span class="fu">&lt;&gt;</span> show n <span class="fu">&lt;&gt;</span> <span class="st">&quot; word counts ...&quot;</span><span class="ot"> ::</span> <span class="dt">Text</span>)
     ws <span class="ot">&lt;-</span> <span class="kw">case</span> i <span class="kw">of</span>
-      <span class="dt">FileIn</span> f <span class="ot">-&gt;</span> runFaves n (B.readFile f)
-      <span class="dt">UrlIn</span> u <span class="ot">-&gt;</span> fmap (faves n) (fromUrl u)
+      <span class="dt">FileIn</span> f <span class="ot">-&gt;</span>  faves n <span class="fu">&lt;$&gt;</span> fromFile f
+      <span class="dt">UrlIn</span> u <span class="ot">-&gt;</span> faves n <span class="fu">&lt;$&gt;</span> fromUrl u
     sequence_ <span class="fu">$</span> fmap ((\x <span class="ot">-&gt;</span> x ws) <span class="fu">.</span> doOutput) ((\(<span class="dt">Outputs</span> xs) <span class="ot">-&gt;</span> xs) os)
       <span class="kw">where</span>
 <span class="ot">        doOutput ::</span> <span class="dt">Output</span> <span class="ot">-&gt;</span> [(<span class="dt">Text</span>,<span class="dt">Int</span>)] <span class="ot">-&gt;</span> <span class="dt">IO</span> ()
-        doOutput (<span class="dt">Output</span> <span class="dt">ToStdout</span> <span class="dt">Plain</span>) <span class="fu">=</span> (Protolude.putStrLn <span class="fu">.</span> (show<span class="ot"> ::</span> [(<span class="dt">Text</span>,<span class="dt">Int</span>)] <span class="ot">-&gt;</span> <span class="dt">Text</span>))
+        doOutput (<span class="dt">Output</span> <span class="dt">ToStdout</span> <span class="dt">Plain</span>) <span class="fu">=</span> Protolude.putStrLn <span class="fu">.</span> (show<span class="ot"> ::</span> [(<span class="dt">Text</span>,<span class="dt">Int</span>)] <span class="ot">-&gt;</span> <span class="dt">Text</span>)
         doOutput (<span class="dt">Output</span> <span class="dt">ToStdout</span> <span class="dt">TableHtml</span>) <span class="fu">=</span> Protolude.putStrLn <span class="fu">.</span> mkTable
         doOutput (<span class="dt">Output</span> (<span class="dt">FileOut</span> f) <span class="dt">Plain</span>) <span class="fu">=</span> Protolude.writeFile f <span class="fu">.</span> show
         doOutput (<span class="dt">Output</span> (<span class="dt">FileOut</span> f) <span class="dt">TableHtml</span>) <span class="fu">=</span> Protolude.writeFile f <span class="fu">.</span> mkTable</code></pre></div>
@@ -262,8 +263,7 @@ non
 <li><a href="https://www.stackage.org/package/doctest">doctest</a></li>
 </ul>
 <div class="sourceCode"><pre class="sourceCode literate haskell"><code class="sourceCode haskell"><span class="co">-- | doctests</span>
-<span class="co">-- &gt;&gt;&gt; let tFile = &quot;other/fake.txt&quot;</span>
-<span class="co">-- &gt;&gt;&gt; ws &lt;- runFaves 10 (C.readFile tFile)</span>
+<span class="co">-- &gt;&gt;&gt; faves 10 &lt;$&gt; fromFile &quot;other/fake.txt&quot;</span>
 <span class="co">-- [(&quot;et&quot;,182),(&quot;in&quot;,113),(&quot;est&quot;,70),(&quot;se&quot;,65),(&quot;ad&quot;,64),(&quot;ut&quot;,57),(&quot;numquam&quot;,50),(&quot;ne&quot;,45),(&quot;quod&quot;,44),(&quot;non&quot;,39)]</span></code></pre></div>
 <hr />
 <div class="footer">
