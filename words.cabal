@@ -98,12 +98,7 @@ test-suite test
   main-is:
     test.hs
   build-depends:
-    base >= 4.7 && < 5,
     tasty,
-    HUnit,
-    tasty-hunit,
-    QuickCheck,
-    tasty-quickcheck,
     doctest,
     protolude
   default-extensions:
