@@ -1,0 +1,8 @@
+packages:
+  words.cabal
+
+write-ghc-environment-files: always
+
+allow-newer: *:base
+             , *:containers
+             , *:template-haskell

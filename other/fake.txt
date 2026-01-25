@@ -1,0 +1,6 @@
+the quick brown fox jumps over the lazy dog
+the dog was lazy and brown
+a quick brown fox and another quick fox
+words words words and more words
+testing the word count function with various words
+the the the repetition should be counted correctly

@@ -1,0 +1,59 @@
+cabal-version: 3.0
+name: words
+version: 0.1.0.0
+license: BSD-3-Clause
+license-file: LICENSE
+copyright: Tony Day (c) 2025
+category: text
+author: Tony Day
+maintainer: tonyday567@gmail.com
+homepage: https://github.com/tonyday567/words#readme
+bug-reports: https://github.com/tonyday567/words/issues
+synopsis: Word counting utilities
+description: Utilities for efficient word counting from streams
+build-type: Simple
+tested-with:
+  ghc ==9.10.3
+  ghc ==9.12.2
+  ghc ==9.14.1
+
+extra-doc-files:
+  other/fake.txt
+  readme.md
+
+source-repository head
+  type: git
+  location: https://github.com/tonyday567/words
+
+common ghc-options-stanza
+  ghc-options:
+    -Wall
+    -Wcompat
+    -Widentities
+    -Wincomplete-record-updates
+    -Wincomplete-uni-patterns
+    -Wpartial-fields
+    -Wredundant-constraints
+
+library
+  import: ghc-options-stanza
+  default-language: GHC2024
+  hs-source-dirs: src
+  build-depends:
+    base >=4.14 && <5,
+    bytestring,
+    containers >=0.6 && <0.9,
+    foldl,
+    http-client,
+    http-client-tls,
+    http-conduit,
+    perf >=0.14,
+    resourcet,
+    streaming,
+    streaming-bytestring,
+    text,
+
+  exposed-modules:
+    Words
+
+  ghc-options: -O2
