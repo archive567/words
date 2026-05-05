@@ -9,20 +9,24 @@
 -- >
 -- > -- Count words from a URL (Project Gutenberg)
 -- > result <- fromUrl "http://www.gutenberg.org/files/4300/4300-0.txt"
+--
+-- > urlToFile "http://www.gutenberg.org/files/4300/4300-0.txt" "alice.txt"
 module Words
   ( wordCount,
     wordStream,
     foldWords,
     fromUrl,
+    fromUrlFreq,
     fromFile,
+    streamToFile,
+    urlToFile,
   )
 where
 
+import Data.ByteString.Lazy qualified as BL
+
 import qualified Control.Foldl as L
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as BSC
-import qualified Data.ByteString.Streaming.Char8 as B
-import qualified Data.List as List
+import qualified Streaming.ByteString.Char8 as B
 import qualified Data.Map.Strict as Map
 import qualified Streaming as S
 import qualified Streaming.Prelude as S
@@ -30,7 +34,6 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Text.Encoding (decodeUtf8)
 import Data.Function ((&))
-import Data.Ord (Down(..), comparing)
 import Control.Category ((>>>))
 import Data.Map (Map)
 import Network.HTTP.Simple (httpBS, getResponseBody)
@@ -42,7 +45,7 @@ wordCount :: L.Fold Text (Map Text Int)
 wordCount = L.Fold (\m w -> Map.insertWith (+) w 1 m) Map.empty id
 
 -- | Take a ByteString (a streaming library bytestring) and make a text word stream
-wordStream :: Monad m => Int -> B.ByteString m r -> S.Stream (S.Of Text) m ()
+wordStream :: Monad m => Int -> B.ByteStream m r -> S.Stream (S.Of Text) m ()
 wordStream n s =
     s &
     B.words &
@@ -55,9 +58,18 @@ wordStream n s =
     S.concat &
     S.filter (/="")
 
+streamToFile :: FilePath ->  B.ByteStream IO () -> IO () 
+streamToFile f s = BL.writeFile f =<< B.toLazy_ s  
+
 -- | Fold that counts words from a streaming bytestring
-foldWords :: Monad m => B.ByteString m r -> m (Map Text Int)
+foldWords :: Monad m => B.ByteStream m r -> m (Map Text Int)
 foldWords s = L.purely S.fold_ wordCount (wordStream 10000 s)
+
+fromUrl :: String -> (B.ByteStream IO () -> IO a) -> IO a
+fromUrl url f = do
+    req <- parseRequest url
+    resp <- httpBS req
+    f (B.fromChunks (S.each [getResponseBody resp]))
 
 -- | Run a URL stream and count word frequencies.
 --
@@ -68,12 +80,17 @@ foldWords s = L.purely S.fold_ wordCount (wordStream 10000 s)
 -- List.take 10 . List.sortBy (comparing (Down . snd)) . Map.toList $ result
 -- -- returns: [("the",551),("and",308),("a",255),("of",247),("his",191),("he",190),("to",180),("in",170),("said",166),("i",151)]
 -- @
-fromUrl :: String -> IO (Map Text Int)
-fromUrl f = do
-    req <- parseRequest f
-    resp <- httpBS req
-    foldWords (B.fromChunks (S.each [getResponseBody resp]))
+fromUrlFreq :: String -> IO (Map Text Int)
+fromUrlFreq url = fromUrl url foldWords
 
 -- | Run a file stream
 fromFile :: FilePath -> IO (Map Text Int)
 fromFile f = runResourceT (foldWords (B.readFile f))
+
+infixr 8 ⋎
+(⋎) :: (a -> b -> c) -> (d -> b) -> a -> d -> c
+f ⋎ g = \a b -> f a (g b)
+
+urlToFile :: String -> FilePath -> IO ()
+urlToFile = fromUrl ⋎ streamToFile
+
