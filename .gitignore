@@ -7,3 +7,5 @@ stack.yaml.lock
 /.hkgr/
 /.hie/
 .ghc.environment.*
+alice.md
+ulysses.md
