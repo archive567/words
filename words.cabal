@@ -72,3 +72,16 @@ library
     Words
 
   ghc-options: -O2
+
+executable bench-words
+  import: ghc-options-stanza
+  import: ghc2024-stanza
+  hs-source-dirs: app
+  main-is: Bench.hs
+  build-depends:
+    base >=4.14 && <5,
+    circuits-meter,
+    deepseq,
+    words,
+
+  ghc-options: -O2 -rtsopts
