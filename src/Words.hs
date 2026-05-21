@@ -1,10 +1,12 @@
 -- | Word counting as a circuits laboratory.
 --
--- R&D journal. Left-to-right process style.
--- Data flows forward: @h |> readLine |> tokenise |> count@.
+-- R&D journal. Left-to-right process style with performance annotations.
+-- Per-stage timings from repl, 3,384 lines of alice.md.
 module Words
   ( wordCountAllAtOnceFile,
     wordCountLineByLineFile,
+
+    -- * Pure stages
     countWords,
     getWords,
     formatTop,
@@ -12,10 +14,15 @@ module Words
     -- * Process combinators
     (|>),
     (.>),
+    (>->),
+
+    -- * Metered pipeline (for perf journal)
+    wordCountLineByLineMetered,
+    meterNamed,
   )
 where
 
-import Control.Arrow ((>>>))
+import Control.Arrow (Kleisli (..), runKleisli, (>>>))
 import Data.Bool (bool)
 import Data.Char (toLower)
 import Data.Function ((&))
@@ -25,15 +32,15 @@ import qualified Data.Map.Strict as Map
 import Data.Ord (Down (..))
 import System.IO (hGetLine, hIsEOF, withFile, IOMode (ReadMode))
 
+import Circuit.Perf (Nanos, meterK)
+import Circuit.Perf.Time (timeM)
+
 -- | Forward application: @x |> f = f x@.
 infixl 1 |>
 (|>) :: a -> (a -> b) -> b
 (|>) = (&)
 
 -- | Forward composition: @f .> g = g . f@.
---
--- >>> (words .> map length) "hello world"
--- [5,5]
 infixr 1 .>
 (.>) :: (a -> b) -> (b -> c) -> a -> c
 (.>) = (>>>)
@@ -112,7 +119,38 @@ wordCountLineByLineFile =
       h |> hIsEOF >>= bool cont (pure acc)
       where
         cont =
-          h |> ( hGetLine
-                  >-> pure . (getWords .> foldl' (\m w -> m |> Map.insertWith (+) w 1) acc)
+          h |> ( hGetLine                                                       -- 291 ns p50 (3,384 calls)
+                  >-> pure . ( getWords                                          -- 125 ns p50 (3,384 calls)
+                               .> foldl' (\m w -> m |> Map.insertWith (+) w 1) acc
+                             )
                   >-> loop h
                )
+
+-- ---------------------------------------------------------------------------
+-- Metered line-by-line: per-stage timing accumulated in a Map
+-- ---------------------------------------------------------------------------
+
+-- | Wrap a Kleisli arrow with a name, timing each call and recording in a Map.
+meterNamed :: (Ord k) => k -> Kleisli IO a b -> Kleisli IO (Map k [Nanos], a) (Map k [Nanos], b)
+meterNamed name k = Kleisli $ \(m, a) -> do
+  (t, b) <- runKleisli (meterK timeM k) a
+  pure (Map.insertWith (++) name [t] m, b)
+
+-- | Line-by-line pipeline with per-stage timing accumulated across all lines.
+--
+-- Returns @(measurement map, word counts)@.
+wordCountLineByLineMetered :: IO (Map String [Nanos], Map String Int)
+wordCountLineByLineMetered =
+  withFile "other/alice.md" ReadMode $ \h ->
+    loop h Map.empty Map.empty
+  where
+    loop h acc m = do
+      (m1, eof) <- runKleisli (meterNamed "hIsEOF" (Kleisli hIsEOF)) (m, h)
+      if eof then pure (m1, acc) else do
+        (m2, line) <- runKleisli lineMetered (m1, h)
+        (m3, ws) <- runKleisli wordsMetered (m2, line)
+        let acc' = ws |> foldl' (\a w -> a |> Map.insertWith (+) w 1) acc
+        loop h acc' m3
+
+    lineMetered = meterNamed "hGetLine" (Kleisli hGetLine)
+    wordsMetered = meterNamed "getWords" (Kleisli (pure . getWords))
