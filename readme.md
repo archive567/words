@@ -10,3 +10,7 @@ We would like you to write code in Words.hs that:
 🔵 line-by-line: using hGetLine and processing the String on a line-by-line basis, simulating resource constraint. 
 
 We are going to measure the performance of each pipeline, so your code should be clear.
+
+---
+
+See [examples/perf-words.md](examples/perf-words.md) — first pass at metering.
