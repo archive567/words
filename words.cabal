@@ -9,16 +9,15 @@ author: Tony Day
 maintainer: tonyday567@gmail.com
 homepage: https://github.com/tonyday567/words#readme
 bug-reports: https://github.com/tonyday567/words/issues
-synopsis: Word counting utilities
-description: Utilities for efficient word counting from streams
+synopsis: Word counting as a circuits laboratory.
+description: R&D journal. Word counting as a circuits laboratory.
 build-type: Simple
 tested-with:
-  ghc ==9.10.3
+  ghc ==9.10.1
   ghc ==9.12.2
   ghc ==9.14.1
 
 extra-doc-files:
-  other/fake.txt
   readme.md
 
 source-repository head
@@ -35,22 +34,38 @@ common ghc-options-stanza
     -Wpartial-fields
     -Wredundant-constraints
 
+common ghc2024-additions
+  default-extensions:
+    DataKinds
+    DerivingStrategies
+    DisambiguateRecordFields
+    ExplicitNamespaces
+    GADTs
+    LambdaCase
+    MonoLocalBinds
+    RoleAnnotations
+
+common ghc2024-stanza
+  if impl(ghc >=9.10)
+    default-language:
+      GHC2024
+  else
+    import: ghc2024-additions
+    default-language:
+      GHC2021
+
 library
   import: ghc-options-stanza
-  default-language: GHC2024
+  import: ghc2024-stanza
   hs-source-dirs: src
   build-depends:
     base >=4.14 && <5,
     bytestring,
+    circuits,
+    circuits-meter,
+    circuits-parser,
     containers >=0.6 && <0.9,
-    foldl,
-    http-client,
-    http-client-tls,
-    http-conduit,
-    perf >=0.14,
-    resourcet,
-    streaming,
-    streaming-bytestring,
+    deepseq,
     text,
 
   exposed-modules:

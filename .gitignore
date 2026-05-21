@@ -1,11 +1,8 @@
 /.stack-work/
 /dist-newstyle/
-TAGS
 stack.yaml.lock
 **/.DS_Store
-/cabal.project.local
-/.hkgr/
+cabal.project.local*
 /.hie/
 .ghc.environment.*
-alice.md
-ulysses.md
+/.hkgr/

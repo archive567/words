@@ -1,96 +1,105 @@
-{-# LANGUAGE OverloadedStrings #-}
-
--- | Word counting utilities from streaming bytestrings.
+-- | Word counting as a circuits laboratory.
 --
--- Example usage:
---
--- > -- Count words from a local file
--- > result <- fromFile "other/fake.txt"
--- >
--- > -- Count words from a URL (Project Gutenberg)
--- > result <- fromUrl "http://www.gutenberg.org/files/4300/4300-0.txt"
---
--- > urlToFile "http://www.gutenberg.org/files/4300/4300-0.txt" "alice.txt"
+-- R&D journal. Two word-counting pipelines, two resource strategies:
+-- all-at-once (getContents) and line-by-line (getLine).
 module Words
-  ( wordCount,
-    wordStream,
-    foldWords,
-    fromUrl,
-    fromUrlFreq,
-    fromFile,
-    streamToFile,
-    urlToFile,
+  ( -- * All-at-once pipeline
+    wordCountAllAtOnce,
+    wordCountAllAtOnceFile,
+
+    -- * Line-by-line pipeline
+    wordCountLineByLine,
+    wordCountLineByLineFile,
+
+    -- * Shared
+    normalise,
+    countWords,
+    mergeCounts,
+    topN,
+    printTopN,
+    printFrequencies,
   )
 where
 
-import Data.ByteString.Lazy qualified as BL
-
-import qualified Control.Foldl as L
-import qualified Streaming.ByteString.Char8 as B
+import Data.Char (toLower)
+import Data.List (sortOn)
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import qualified Streaming as S
-import qualified Streaming.Prelude as S
-import Data.Text (Text)
-import qualified Data.Text as Text
-import Data.Text.Encoding (decodeUtf8)
-import Data.Function ((&))
-import Control.Category ((>>>))
-import Data.Map (Map)
-import Network.HTTP.Simple (httpBS, getResponseBody)
-import Network.HTTP.Conduit (parseRequest)
-import Control.Monad.Trans.Resource (runResourceT)
+import Data.Ord (Down (..))
+import System.IO (Handle, hGetLine, hIsEOF, withFile, IOMode (ReadMode))
 
--- | Fold that counts word frequencies from a stream of Text.
-wordCount :: L.Fold Text (Map Text Int)
-wordCount = L.Fold (\m w -> Map.insertWith (+) w 1 m) Map.empty id
+-- ---------------------------------------------------------------------------
+-- Shared pure functions
+-- ---------------------------------------------------------------------------
 
--- | Take a ByteString (a streaming library bytestring) and make a text word stream
-wordStream :: Monad m => Int -> B.ByteStream m r -> S.Stream (S.Of Text) m ()
-wordStream n s =
-    s &
-    B.words &
-    B.denull &
-    S.take n &
-    S.mapped B.toStrict & -- the strict wall of pain
-    S.map ( decodeUtf8 >>>
-            Text.toLower >>>
-            Text.split (not . (`elem` ['a'..'z']))) &
-    S.concat &
-    S.filter (/="")
+-- | Normalise a word: keep only a-z, lowercase.
+normalise :: String -> String
+normalise = map toLower . filter (`elem` ['a' .. 'z'])
 
-streamToFile :: FilePath ->  B.ByteStream IO () -> IO () 
-streamToFile f s = BL.writeFile f =<< B.toLazy_ s  
+-- | Extract normalised words from a chunk of text, dropping empties.
+wordsIn :: String -> [String]
+wordsIn = filter (not . null) . map normalise . words
 
--- | Fold that counts words from a streaming bytestring
-foldWords :: Monad m => B.ByteStream m r -> m (Map Text Int)
-foldWords s = L.purely S.fold_ wordCount (wordStream 10000 s)
+-- | Count words in a single chunk.
+countWords :: String -> Map String Int
+countWords = foldl (\m w -> Map.insertWith (+) w 1 m) Map.empty . wordsIn
 
-fromUrl :: String -> (B.ByteStream IO () -> IO a) -> IO a
-fromUrl url f = do
-    req <- parseRequest url
-    resp <- httpBS req
-    f (B.fromChunks (S.each [getResponseBody resp]))
+-- | Merge two count maps.
+mergeCounts :: Map String Int -> Map String Int -> Map String Int
+mergeCounts = Map.unionWith (+)
 
--- | Run a URL stream and count word frequencies.
---
--- Example: Count words from Project Gutenberg (Alice in Wonderland):
+-- | Take the top n words by frequency.
+topN :: Int -> Map String Int -> [(String, Int)]
+topN n = take n . sortOn (Down . snd) . Map.toList
+
+-- | Print word frequencies, one per line.
+printFrequencies :: [(String, Int)] -> IO ()
+printFrequencies = mapM_ (\(w, c) -> putStrLn (w ++ ": " ++ show c))
+
+-- | Count words in a string and print the top n.
+printTopN :: Int -> String -> IO ()
+printTopN n = printFrequencies . topN n . countWords
+
+-- ---------------------------------------------------------------------------
+-- Pipeline A: all-at-once (getContents)
+-- ---------------------------------------------------------------------------
+
+-- | Read entire contents as a String, count words, print top n.
 --
 -- @
--- result <- fromUrl "http://www.gutenberg.org/files/4300/4300-0.txt"
--- List.take 10 . List.sortBy (comparing (Down . snd)) . Map.toList $ result
--- -- returns: [("the",551),("and",308),("a",255),("of",247),("his",191),("he",190),("to",180),("in",170),("said",166),("i",151)]
+-- wordCountAllAtOnce n = readFile path >>= printTopN n
 -- @
-fromUrlFreq :: String -> IO (Map Text Int)
-fromUrlFreq url = fromUrl url foldWords
+wordCountAllAtOnce :: Int -> FilePath -> IO ()
+wordCountAllAtOnce n path = do
+  contents <- readFile path
+  printTopN n contents
 
--- | Run a file stream
-fromFile :: FilePath -> IO (Map Text Int)
-fromFile f = runResourceT (foldWords (B.readFile f))
+-- | All-at-once pipeline reading from @other\/alice.md@, top 5.
+wordCountAllAtOnceFile :: IO ()
+wordCountAllAtOnceFile = wordCountAllAtOnce 5 "other/alice.md"
 
-infixr 8 ⋎
-(⋎) :: (a -> b -> c) -> (d -> b) -> a -> d -> c
-f ⋎ g = \a b -> f a (g b)
+-- ---------------------------------------------------------------------------
+-- Pipeline B: line-by-line (getLine)
+-- ---------------------------------------------------------------------------
 
-urlToFile :: String -> FilePath -> IO ()
-urlToFile = fromUrl ⋎ streamToFile
+-- | Read a file line by line, accumulating word counts.
+-- Mimics a resource-constrained streaming pipeline.
+processLineByLine :: Handle -> Map String Int -> IO (Map String Int)
+processLineByLine h acc = do
+  eof <- hIsEOF h
+  if eof
+    then pure acc
+    else do
+      line <- hGetLine h
+      let chunkCounts = countWords line
+      processLineByLine h (mergeCounts acc chunkCounts)
 
+-- | Read a file one line at a time, count words, print top n.
+wordCountLineByLine :: Int -> FilePath -> IO ()
+wordCountLineByLine n path = do
+  counts <- withFile path ReadMode (`processLineByLine` Map.empty)
+  printFrequencies (topN n counts)
+
+-- | Line-by-line pipeline reading from @other\/alice.md@, top 5.
+wordCountLineByLineFile :: IO ()
+wordCountLineByLineFile = wordCountLineByLine 5 "other/alice.md"

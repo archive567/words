@@ -1,35 +1,61 @@
 # words
 
-Streaming word counting and frequency analysis from files and URLs.
+R&D journal. Word counting as a circuits laboratory.
 
-## Features
+## entry 1 — two pipelines, two resource strategies
 
-- **fromUrl** — fetch and analyze text from a URL (Project Gutenberg, etc.)
-- **fromFile** — count words from a local file
-- **fromUrlFreq** — stream a URL and return word frequency map
-- **wordStream** — convert ByteString to lowercased, filtered word stream
-- **wordCount** — fold to accumulate word frequencies as a Map
+The same computation (word frequency → top 5), two ways to read the file.
 
-## Usage
+### A: all-at-once
 
-Count word frequencies from Project Gutenberg (Alice in Wonderland):
+`readFile` slurps the whole file into a String. Simple, but the entire
+file lives in memory at once. Fine for Alice (170KB), but it doesn't
+scale — and it doesn't compose with other resource-bound stages.
 
 ```haskell
-import Words
+wordCountAllAtOnce :: Int -> FilePath -> IO ()
+wordCountAllAtOnce n path = do
+  contents <- readFile path
+  printTopN n contents
 
-result <- fromUrlFreq "http://www.gutenberg.org/files/4300/4300-0.txt"
-take 10 . sortBy (comparing (Down . snd)) . Map.toList $ result
+wordCountAllAtOnceFile :: IO ()
+wordCountAllAtOnceFile = wordCountAllAtOnce 5 "other/alice.md"
 ```
 
-Output:
-```
-[("the",551),("and",308),("a",255),("of",247),("his",191),("he",190),("to",180),("in",170),("said",166),("i",151)]
-```
+### B: line-by-line
 
-Or from a local file:
+Opens the file, reads one line at a time via `hGetLine`, accumulates
+counts into a Map. The handle is the resource — it's explicitly opened
+and closed (`withFile`). This is closer to a streaming pipeline: each
+line is processed and discarded before the next is read.
 
 ```haskell
-frequencies <- fromFile "alice.txt"
+processLineByLine :: Handle -> Map String Int -> IO (Map String Int)
+processLineByLine h acc = do
+  eof <- hIsEOF h
+  if eof
+    then pure acc
+    else do
+      line <- hGetLine h
+      let chunkCounts = countWords line
+      processLineByLine h (mergeCounts acc chunkCounts)
+
+wordCountLineByLine :: Int -> FilePath -> IO ()
+wordCountLineByLine n path = do
+  counts <- withFile path ReadMode (`processLineByLine` Map.empty)
+  printFrequencies (topN n counts)
+
+wordCountLineByLineFile :: IO ()
+wordCountLineByLineFile = wordCountLineByLine 5 "other/alice.md"
 ```
 
-See haddock documentation for full API.
+Both produce the same output. The difference is *how the file is held*.
+
+### what's next
+
+The `withFile` / `processLineByLine` pattern is a resource bracket in
+disguise — open, use, close. But it's not compositional: the handle is
+threaded through an explicit recursive loop, not through the category.
+
+The question for entry 2: can we make the file bracket a first-class
+Circuit combinator?
