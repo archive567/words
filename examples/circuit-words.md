@@ -55,27 +55,23 @@ putStrLn $ "format: " ++ show tFmt ++ " ns"
 
 ## bracket syntax
 
-With stages as `Circuit (Kleisli IO) (,)`, the `◅`/`▻` brackets apply:
+With `liftPure = Lift . Kleisli . (pure .)`, stages are one-liners:
 
 ```haskell
-import Circuit.Circuit (Circuit(..), reify)
 import Circuit.Perf (Nanos, Meter(..), (◅), (▻), postC)
 import Circuit.Perf.Time (timeM)
-import Control.Arrow (Kleisli(..), runKleisli)
 
-let countStage = Lift (Kleisli (pure . countWords))
-let formatStage = Lift (Kleisli (pure . formatTop 5))
-
--- meter the composed pipeline, discarding measurement
-let timed = timeM ◅ (formatStage `Compose` countStage) ▻ timeM
+let liftPure f = Lift (Kleisli (pure . f))
+let countStage = liftPure countWords
+let formatStage = liftPure (formatTop 5)
 
 -- meter and keep the measurement
 let measured = postC (post timeM) `Compose` (timeM ◅ (formatStage `Compose` countStage))
 
+-- run
 let reify' = reify :: Circuit (Kleisli IO) (,) String (Nanos, String) -> Kleisli IO String (Nanos, String)
 (t, result) <- runKleisli (reify' measured) "the cat and the cat"
--- result: "cat: 2\nthe: 2\nand: 1"
--- t: ~4000 ns
+-- result: "cat: 2\nthe: 2\nand: 1"    t: ~3600 ns
 ```
 
 ## process ↔ circuit map
