@@ -5,6 +5,9 @@
 module Words
   ( wordCountAllAtOnceFile,
     wordCountLineByLineFile,
+    countWords,
+    getWords,
+    formatTop,
   )
 where
 

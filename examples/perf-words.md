@@ -1,50 +1,75 @@
 # perf-words ⟜ raw speed of word-counting pipelines
 
-First pass at metering the word-counting pipelines with circuits-meter.
-Start with the simplest thing: wrap `wordCountAllAtOnceFile` in a Kleisli,
-meter it, record the number.
+Measuring word-counting with circuits-meter. Start with `ticks` on the pure
+counting function, then meter the full pipeline.
 
-## all-at-once
+## pure counting (ticks)
 
-Wrap the IO action in a Kleisli, meter with `timeM`:
+Read the file once, then time only the counting logic. This isolates the
+algorithm from I/O noise.
+
+```haskell
+import Words (countWords)
+import Circuit.Perf.Time (ticks)
+import Control.DeepSeq (force)
+import Control.Exception (evaluate)
+import System.IO (readFile)
+
+-- read once, force to NF so timing is clean
+contents <- evaluate . force =<< readFile "other/alice.md"
+
+-- n runs, returns ([Nanos], result)
+(ts, counts) <- ticks 10 countWords contents
+
+putStrLn $ "runs:  " ++ show (length ts)
+putStrLn $ "min:   " ++ show (minimum ts) ++ " ns"
+putStrLn $ "p50:   " ++ show (sort ts !! (length ts `div` 2)) ++ " ns"
+```
+
+| n | min (ns) | p50 (ns) | note |
+|---|----------|----------|------|
+|   |          |          | repl |
+|   |          |          |      |
+
+## full pipeline (timesK)
+
+Time the whole IO action — file read + count + print:
 
 ```haskell
 import Words (wordCountAllAtOnceFile, wordCountLineByLineFile)
-import Circuit.Perf (meterK, timesK)
+import Circuit.Perf (timesK)
 import Circuit.Perf.Time (timeM)
 import Control.Arrow (Kleisli (..), runKleisli)
 
--- single run
-(t, ()) <- runKleisli (meterK timeM (Kleisli (\_ -> wordCountAllAtOnceFile))) ()
-putStrLn $ "all-at-once: " ++ show t ++ " ns"
+-- all-at-once
+(ts, ()) <- runKleisli (timesK 5 timeM (Kleisli (\_ -> wordCountAllAtOnceFile))) ()
+putStrLn $ "all-at-once p50: " ++ show (sort ts !! (length ts `div` 2)) ++ " ns"
+
+-- line-by-line
+(ts2, ()) <- runKleisli (timesK 5 timeM (Kleisli (\_ -> wordCountLineByLineFile))) ()
+putStrLn $ "line-by-line p50: " ++ show (sort ts2 !! (length ts2 `div` 2)) ++ " ns"
 ```
 
-| run | all-at-once (ns) | note |
-|-----|-----------------|------|
-| 1   | 37,496,042      | repl (interpreted) |
-|     |                 |                    |
-|     |                 |                    |
-
-## line-by-line
-
-Same pattern for the line-by-line pipeline:
-
-```haskell
-(t, ()) <- runKleisli (meterK timeM (Kleisli (\_ -> wordCountLineByLineFile))) ()
-putStrLn $ "line-by-line: " ++ show t ++ " ns"
-```
-
-| run | line-by-line (ns) | note |
-|-----|-------------------|------|
-|     |                   |      |
+| pipeline | n | p50 (ns) | note |
+|----------|---|----------|------|
+| all-at-once | | | repl |
+| line-by-line | | | repl |
 
 ## compiled (-O2)
 
-Repl numbers are 10-100x slower than compiled. To get real numbers,
-add an exe or use `once`/`timesC` from a compiled context.
+Repl numbers are 10-100x slower. For real numbers, compile with `-O2`:
+
+```bash
+cabal exec ghc -- -O2 -o /tmp/perf-words examples/perf-words.hs && /tmp/perf-words
+```
+
+| pipeline | min (ns) | p50 (ns) | note |
+|----------|----------|----------|------|
+| all-at-once | | | -O2 |
+| line-by-line | | | -O2 |
 
 ## next
 
-- Lift into `Circuit (Kleisli IO) (,) () ()` via `Lift`
-- Meter with bracket syntax: `timeM ◅ pipeline ▻ timeM`
-- Per-stage metering: meter `readFile` separately from `countWords` from `putStr`
+- Lift into `Circuit (Kleisli IO) (,) () ()` — bracket syntax
+- Per-stage metering: `timeM ◅ readFile ▻ timeM` then `timeM ◅ countWords ▻ timeM`
+- `once` for single-shot measurement
