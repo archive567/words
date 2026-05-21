@@ -14,3 +14,4 @@ We are going to measure the performance of each pipeline, so your code should be
 ---
 
 See [examples/perf-words.md](examples/perf-words.md) — first pass at metering.
+See [examples/signal-loop.md](examples/signal-loop.md) — per-stage metered loop with three-signal branching.

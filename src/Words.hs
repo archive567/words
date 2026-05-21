@@ -19,6 +19,12 @@ module Words
     -- * Metered pipeline (for perf journal)
     wordCountLineByLineMetered,
     meterNamed,
+
+    -- * Signal-based loop (per-stage metering with branching)
+    Signal (Continue, Fallback, Done),
+    (<|>),
+    loopAlt,
+    wordCountSignal,
   )
 where
 
@@ -154,3 +160,57 @@ wordCountLineByLineMetered =
 
     lineMetered = meterNamed "hGetLine" (Kleisli hGetLine)
     wordsMetered = meterNamed "getWords" (Kleisli (pure . getWords))
+
+-- ---------------------------------------------------------------------------
+-- Signal: three-way branching for loop stages
+-- ---------------------------------------------------------------------------
+
+-- | A three-signal branch: @Continue s@ loops with new state @s@,
+--   @Fallback s@ tries the alternative in @('<|>')@, @Done r@ exits
+--   the loop with result @r@.
+data Signal s r = Continue s | Fallback s | Done r
+
+-- | Try the first stage; if it signals 'Fallback', try the second.
+--   'Continue' and 'Done' pass through unchanged.
+infixl 3 <|>
+(<|>) :: Kleisli IO s (Signal s r) -> Kleisli IO s (Signal s r) -> Kleisli IO s (Signal s r)
+Kleisli f <|> Kleisli g = Kleisli $ \s -> do
+  r <- f s
+  case r of
+    Continue s' -> pure (Continue s')
+    Fallback s'  -> g s'
+    Done r'      -> pure (Done r')
+
+-- | Run a 'Signal'-producing step in a loop: feed 'Continue' back,
+--   expect 'Fallback' to have been consumed by @('<|>')@, exit on 'Done'.
+loopAlt :: Kleisli IO s (Signal s r) -> Kleisli IO s r
+loopAlt (Kleisli f) = Kleisli $ \s0 -> go s0
+  where
+    go s = f s >>= \case
+      Continue s' -> go s'
+      Fallback _  -> error "loopAlt: unexpected Fallback"
+      Done r'     -> pure r'
+
+-- | Line-by-line word counting with per-stage timing, using 'Signal' and @('<|>')@.
+--   Each of @hIsEOF@, @hGetLine@, @getWords@ is metered individually.
+--   Returns @(measurement map, word counts)@.
+wordCountSignal :: IO (Map String [Nanos], Map String Int)
+wordCountSignal =
+  withFile "other/alice.md" ReadMode $ \h ->
+    runKleisli (loopAlt (processOneLine <|> done)) (Map.empty, h, Map.empty)
+  where
+    meteredEOF = meterNamed "hIsEOF" (Kleisli hIsEOF)
+    meteredGetLine = meterNamed "hGetLine" (Kleisli hGetLine)
+    meteredGetWords = meterNamed "getWords" (Kleisli $ pure . getWords)
+
+    processOneLine = Kleisli $ \(m, h, acc) -> do
+      (m1, eof) <- runKleisli meteredEOF (m, h)
+      if eof
+        then pure (Fallback (m1, h, acc))
+        else do
+          (m2, line) <- runKleisli meteredGetLine (m1, h)
+          (m3, ws)   <- runKleisli meteredGetWords (m2, line)
+          let acc' = foldl' (\a w -> Map.insertWith (+) w 1 a) acc ws
+          pure (Continue (m3, h, acc'))
+
+    done = Kleisli $ \(m, _, acc) -> pure (Done (m, acc))

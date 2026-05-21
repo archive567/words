@@ -56,7 +56,11 @@ let reify' = reify :: Circuit (Kleisli IO) Either Handle (Map String Int) -> Kle
 ## the metering gap
 
 `meterK timeM` wraps output in `(Nanos, ...)`, but `Knot` needs `Either a c`.
-To meter individual stages inside a Knot, one of:
+The `Signal`/`<|>` approach (see [signal-loop.md](signal-loop.md)) solves this
+in Kleisli space: `Continue`/`Fallback`/`Done` with state-threaded measurement.
+No Either tensor needed.
+
+For Circuit-native metering inside a Knot:
 
 - **ambient**: thread a measurement Map alongside via the `(,)` tensor, updating it
   at each substage. The Map rides `ambient` while the loop iterates via `Either`.
