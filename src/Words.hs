@@ -1,25 +1,75 @@
 -- | Word counting as a circuits laboratory.
 --
--- R&D journal. Two word-counting pipelines, two resource strategies:
--- all-at-once (getContents) and line-by-line (getLine).
+-- R&D journal. Left-to-right process style.
+-- Data flows forward: @h |> readLine |> tokenise |> count@.
 module Words
   ( wordCountAllAtOnceFile,
     wordCountLineByLineFile,
     countWords,
     getWords,
     formatTop,
+
+    -- * Process combinators
+    (|>),
+    (.>),
   )
 where
 
+import Control.Arrow ((>>>))
 import Data.Char (toLower)
+import Data.Function ((&))
 import Data.List (sortOn)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Ord (Down (..))
 import System.IO (hGetLine, hIsEOF, withFile, IOMode (ReadMode))
 
+-- | Forward application: @x |> f = f x@.
+infixl 1 |>
+(|>) :: a -> (a -> b) -> b
+(|>) = (&)
+
+-- | Forward composition: @f .> g = g . f@.
+--
+-- >>> (words .> map length) "hello world"
+-- [5,5]
+infixr 1 .>
+(.>) :: (a -> b) -> (b -> c) -> a -> c
+(.>) = (>>>)
+
 -- $setup
 -- >>> import Words
+
+-- ---------------------------------------------------------------------------
+-- Pure stages (left-to-right)
+-- ---------------------------------------------------------------------------
+
+-- | Extract words from a string: split, keep a-z, lowercase, drop empties.
+--
+-- >>> "Hello, World!" |> getWords
+-- ["hello","world"]
+getWords :: String -> [String]
+getWords = words .> map (map toLower . filter (`elem` ['a' .. 'z'])) .> filter (not . null)
+
+-- | Count word frequencies from a string.
+--
+-- >>> "a b a" |> countWords |> Map.toList
+-- [("a",2),("b",1)]
+countWords :: String -> Map String Int
+countWords = getWords .> map (\w -> (w, 1)) .> Map.fromListWith (+)
+
+-- | Format the top N word frequencies.
+--
+-- >>> let m = Map.fromList [("the",10),("a",5),("cat",3)]
+-- >>> putStr $ formatTop 2 m
+-- the: 10
+-- a: 5
+formatTop :: Int -> Map String Int -> String
+formatTop n = Map.toList .> sortOn (Down . snd) .> take n .> map (\(w, c) -> w ++ ": " ++ show c) .> unlines
+
+-- ---------------------------------------------------------------------------
+-- Pipeline A: all-at-once
+-- ---------------------------------------------------------------------------
 
 -- | All-at-once pipeline: read entire file, count words, print top 5.
 --
@@ -32,11 +82,13 @@ import System.IO (hGetLine, hIsEOF, withFile, IOMode (ReadMode))
 wordCountAllAtOnceFile :: IO ()
 wordCountAllAtOnceFile = do
   contents <- readFile "other/alice.md"
-  let wordFreqs = countWords contents
-  putStr $ formatTop 5 wordFreqs
+  contents |> (countWords .> formatTop 5) |> putStr
 
--- | Line-by-line pipeline: read one line at a time, accumulate counts, print top 5.
--- Mimics a resource-constrained streaming pipeline.
+-- ---------------------------------------------------------------------------
+-- Pipeline B: line-by-line (resource-constrained)
+-- ---------------------------------------------------------------------------
+
+-- | Line-by-line pipeline: read one line at a time, accumulate, print top 5.
 --
 -- >>> wordCountLineByLineFile
 -- the: 1523
@@ -48,26 +100,14 @@ wordCountLineByLineFile :: IO ()
 wordCountLineByLineFile =
   withFile "other/alice.md" ReadMode $ \h -> do
     freqs <- loop h Map.empty
-    putStr $ formatTop 5 freqs
+    freqs |> formatTop 5 |> putStr
   where
     loop h acc = do
-      eof <- hIsEOF h
+      eof <- h |> hIsEOF
       if eof
         then pure acc
         else do
-          line <- hGetLine h
-          loop h $! addLine acc line
-    addLine acc line =
-      foldl' (\m w -> Map.insertWith (+) w 1 m) acc (getWords line)
-
--- | Extract words from a string: split on whitespace, keep only a-z, lowercase.
-getWords :: String -> [String]
-getWords = filter (not . null) . map (map toLower . filter (`elem` ['a' .. 'z'])) . words
-
--- | Count word frequencies from a string.
-countWords :: String -> Map String Int
-countWords = Map.fromListWith (+) . map (\w -> (w, 1)) . getWords
-
--- | Format the top N word frequencies for output.
-formatTop :: Int -> Map String Int -> String
-formatTop n = unlines . map (\(w, c) -> w ++ ": " ++ show c) . take n . sortOn (Down . snd) . Map.toList
+          line <- h |> hGetLine
+          loop h $! (line |> getWords |> addLine acc)
+    addLine acc ws =
+      ws |> foldl' (\m w -> m |> Map.insertWith (+) w 1) acc
