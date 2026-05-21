@@ -163,7 +163,6 @@ wordCountLineByLineMetered =
 
 -- ---------------------------------------------------------------------------
 -- Signal: three-way branching for loop stages
--- ---------------------------------------------------------------------------
 
 -- | A three-signal branch: @Continue s@ loops with new state @s@,
 --   @Fallback s@ tries the alternative in @('<|>')@, @Done r@ exits
@@ -173,7 +172,7 @@ data Signal s r = Continue s | Fallback s | Done r
 -- | Try the first stage; if it signals 'Fallback', try the second.
 --   'Continue' and 'Done' pass through unchanged.
 infixl 3 <|>
-(<|>) :: Kleisli IO s (Signal s r) -> Kleisli IO s (Signal s r) -> Kleisli IO s (Signal s r)
+(<|>) :: Monad m => Kleisli m s (Signal s r) -> Kleisli m s (Signal s r) -> Kleisli m s (Signal s r)
 Kleisli f <|> Kleisli g = Kleisli $ \s -> do
   r <- f s
   case r of
@@ -183,7 +182,7 @@ Kleisli f <|> Kleisli g = Kleisli $ \s -> do
 
 -- | Run a 'Signal'-producing step in a loop: feed 'Continue' back,
 --   expect 'Fallback' to have been consumed by @('<|>')@, exit on 'Done'.
-loopAlt :: Kleisli IO s (Signal s r) -> Kleisli IO s r
+loopAlt :: Monad m => Kleisli m s (Signal s r) -> Kleisli m s r
 loopAlt (Kleisli f) = Kleisli $ \s0 -> go s0
   where
     go s = f s >>= \case

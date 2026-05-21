@@ -8,12 +8,12 @@ in Kleisli space — no new GADT constructor, no `Either` tensor required.
 ```haskell
 data Signal s r = Continue s | Fallback s | Done r
 
-(<|>) :: Kleisli IO s (Signal s r)
-      -> Kleisli IO s (Signal s r)
-      -> Kleisli IO s (Signal s r)
+(<|>) :: Monad m => Kleisli m s (Signal s r)
+      -> Kleisli m s (Signal s r)
+      -> Kleisli m s (Signal s r)
 -- tries first; if Fallback, tries second. Continue/Done pass through.
 
-loopAlt :: Kleisli IO s (Signal s r) -> Kleisli IO s r
+loopAlt :: Monad m => Kleisli m s (Signal s r) -> Kleisli m s r
 -- feeds Continue back, stops on Done. Expects Fallback consumed by <|>.
 ```
 
