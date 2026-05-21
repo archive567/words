@@ -69,6 +69,47 @@ cabal run bench-words
 
 Runs all three measurements with `-O2` and reports min/p50/mean.
 
+## per-stage breakdown (pure, repl)
+
+The all-at-once pipeline minus I/O has three stages. 25,966 total words,
+2,921 unique, 170KB file.
+
+```haskell
+import Words (getWords, countWords, formatTop)
+import Circuit.Perf.Time (ticks)
+import Data.List (sort)
+
+contents <- readFile "other/alice.md"
+let !counts = countWords contents
+
+-- 1. tokenise + normalise
+(ts1, _) <- ticks 50 getWords contents
+putStrLn $ "getWords:    p50=" ++ show (sort ts1 !! 25)
+
+-- 2. build frequency map (includes getWords internally)
+(ts2, _) <- ticks 50 countWords contents
+putStrLn $ "countWords:  p50=" ++ show (sort ts2 !! 25)
+
+-- 3. sort + format top 5
+(ts3, _) <- ticks 50 (\m -> formatTop 5 m) counts
+putStrLn $ "formatTop:   p50=" ++ show (sort ts3 !! 25)
+
+-- 4. full pure pipeline
+(ts4, _) <- ticks 50 (\s -> formatTop 5 $ countWords s) contents
+putStrLn $ "full pure:   p50=" ++ show (sort ts4 !! 25)
+```
+
+| stage          | p50 (ns)     | % of total | note              |
+|----------------|-------------|------------|-------------------|
+| `getWords`     | 22,757,000  | 64%        | split + normalise |
+| `countWords`   | 35,473,000  | —          | *includes getWords* |
+| map build only | ~12,716,000 | 36%        | `countWords − getWords` |
+| `formatTop 5`  | 388,000     | 1%         | sort + format     |
+| full pure      | 35,598,000  | 100%       |                   |
+
+**64% of the time is tokenisation.** Map insertion is the other third.
+Formatting is noise. I/O is ~0ms in the noise floor compared to pure work.
+
 ## next
 
 - Lift into `Circuit (Kleisli IO) (,) () ()` — bracket syntax
