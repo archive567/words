@@ -13,7 +13,7 @@ import Data.List (sortOn)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Ord (Down (..))
-import System.IO (Handle, hGetLine, hIsEOF, withFile, IOMode (ReadMode))
+import System.IO (hGetLine, hIsEOF, withFile, IOMode (ReadMode))
 
 -- $setup
 -- >>> import Words
@@ -27,7 +27,10 @@ import System.IO (Handle, hGetLine, hIsEOF, withFile, IOMode (ReadMode))
 -- a: 616
 -- she: 501
 wordCountAllAtOnceFile :: IO ()
-wordCountAllAtOnceFile = undefined
+wordCountAllAtOnceFile = do
+  contents <- readFile "other/alice.md"
+  let wordFreqs = countWords contents
+  putStr $ formatTop 5 wordFreqs
 
 -- | Line-by-line pipeline: read one line at a time, accumulate counts, print top 5.
 -- Mimics a resource-constrained streaming pipeline.
@@ -39,4 +42,29 @@ wordCountAllAtOnceFile = undefined
 -- a: 616
 -- she: 501
 wordCountLineByLineFile :: IO ()
-wordCountLineByLineFile = undefined
+wordCountLineByLineFile =
+  withFile "other/alice.md" ReadMode $ \h -> do
+    freqs <- loop h Map.empty
+    putStr $ formatTop 5 freqs
+  where
+    loop h acc = do
+      eof <- hIsEOF h
+      if eof
+        then pure acc
+        else do
+          line <- hGetLine h
+          loop h $! addLine acc line
+    addLine acc line =
+      foldl' (\m w -> Map.insertWith (+) w 1 m) acc (getWords line)
+
+-- | Extract words from a string: split on whitespace, keep only a-z, lowercase.
+getWords :: String -> [String]
+getWords = filter (not . null) . map (map toLower . filter (`elem` ['a' .. 'z'])) . words
+
+-- | Count word frequencies from a string.
+countWords :: String -> Map String Int
+countWords = Map.fromListWith (+) . map (\w -> (w, 1)) . getWords
+
+-- | Format the top N word frequencies for output.
+formatTop :: Int -> Map String Int -> String
+formatTop n = unlines . map (\(w, c) -> w ++ ": " ++ show c) . take n . sortOn (Down . snd) . Map.toList
