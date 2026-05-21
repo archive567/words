@@ -16,6 +16,7 @@ module Words
 where
 
 import Control.Arrow ((>>>))
+import Data.Bool (bool)
 import Data.Char (toLower)
 import Data.Function ((&))
 import Data.List (sortOn)
@@ -102,12 +103,15 @@ wordCountLineByLineFile =
     freqs <- loop h Map.empty
     freqs |> formatTop 5 |> putStr
   where
-    loop h acc = do
-      eof <- h |> hIsEOF
-      if eof
-        then pure acc
-        else do
-          line <- h |> hGetLine
-          loop h $! (line |> getWords |> addLine acc)
-    addLine acc ws =
-      ws |> foldl' (\m w -> m |> Map.insertWith (+) w 1) acc
+    loop h acc =
+      h |> hIsEOF >>= bool cont (pure acc)
+      where
+        cont =
+          h
+            |> hGetLine
+            |> fmap ( getWords
+                        .> foldl'
+                          (\m w -> m |> Map.insertWith (+) w 1)
+                          acc
+                    )
+            >>= loop h
