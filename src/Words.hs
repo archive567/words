@@ -38,6 +38,11 @@ infixr 1 .>
 (.>) :: (a -> b) -> (b -> c) -> a -> c
 (.>) = (>>>)
 
+-- | Forward Kleisli composition: @f >-> g@ pipes the result of @f@ into @g@.
+infixr 1 >->
+(>->) :: Monad m => (a -> m b) -> (b -> m c) -> a -> m c
+f >-> g = \x -> f x >>= g
+
 -- $setup
 -- >>> import Words
 
@@ -107,11 +112,7 @@ wordCountLineByLineFile =
       h |> hIsEOF >>= bool cont (pure acc)
       where
         cont =
-          h
-            |> hGetLine
-            |> fmap ( getWords
-                        .> foldl'
-                          (\m w -> m |> Map.insertWith (+) w 1)
-                          acc
-                    )
-            >>= loop h
+          h |> ( hGetLine
+                  >-> pure . (getWords .> foldl' (\m w -> m |> Map.insertWith (+) w 1) acc)
+                  >-> loop h
+               )
