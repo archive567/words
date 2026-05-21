@@ -110,6 +110,34 @@ putStrLn $ "full pure:   p50=" ++ show (sort ts4 !! 25)
 **64% of the time is tokenisation.** Map insertion is the other third.
 Formatting is noise. I/O is ~0ms in the noise floor compared to pure work.
 
+### inside getWords
+
+`getWords` itself breaks down into three sub-stages:
+
+```haskell
+-- 1. split on whitespace (Prelude.words)
+(ts1, _) <- ticks 50 words contents
+
+-- 2. per-word: filter a-z + lowercase
+let ws = words contents
+(ts2, _) <- ticks 50 (map (map toLower . filter (`elem` ['a'..'z']))) ws
+
+-- 3. drop empties
+let ns = map (map toLower . filter (`elem` ['a'..'z'])) ws
+(ts3, _) <- ticks 50 (filter (not . null)) ns
+```
+
+| sub-stage       | p50 (ns)    | % of getWords | % of total |
+|-----------------|-------------|---------------|------------|
+| `words` (split) | 3,807,000   | 17%           | 11%        |
+| normalise       | 17,464,000  | 76%           | 49%        |
+| `filter null`   | 1,336,000   | 6%            | 4%         |
+| `getWords`      | 22,883,000  | 100%          | 64%        |
+
+**Character normalisation is half the pipeline.** `filter isAlpha . toLower`
+over 170KB dominates everything else. The `words` split (Prelude, c-level)
+is fast. Map insertion is the other big chunk at 36%.
+
 ## next
 
 - Lift into `Circuit (Kleisli IO) (,) () ()` — bracket syntax
