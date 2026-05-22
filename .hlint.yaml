@@ -1,3 +1,5 @@
 - ignore: {name: Use if}
 - ignore: {name: Use bimap}
 - ignore: {name: Eta reduce}
+- ignore: {name: Use >=>}
+- ignore: {name: Use tuple-section}
