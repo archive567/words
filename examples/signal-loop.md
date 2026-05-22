@@ -1,70 +1,81 @@
-# signal-loop → three-signal branching for per-stage metered loops
+# iter-loop ⟜ Either-trace iteration on the cartesian tensor
 
-`Signal s r = Continue s | Fallback s | Done r` gives three-way branching
-in Kleisli space — no new GADT constructor, no `Either` tensor required.
+`Iter s r = Loop s | Exit r` is the `Either`-trace iteration pattern,
+manually encoded for the @(,)@ tensor.
 
-Re-exported from `Circuit.Perf` (or import `Circuit.Perf.Signal` directly).
-
-## the pieces
+`Loop` feeds back (like `Left` in the `Either` trace).  `Exit` terminates
+(like `Right`).  `loopIter` is what `trace` does for `Either`, rebuilt by
+hand for `(,)`.
 
 ```haskell
-import Circuit.Perf (Signal (..), (<|>), loopAlt)
+import Circuit (Iter (..), loopIter)
 
-data Signal s r = Continue s | Fallback s | Done r
+data Iter s r = Loop s | Exit r
 
-(<|>) :: Monad m => Kleisli m s (Signal s r)
-      -> Kleisli m s (Signal s r)
-      -> Kleisli m s (Signal s r)
--- tries first; if Fallback, tries second. Continue/Done pass through.
-
-loopAlt :: Monad m => Kleisli m s (Signal s r) -> Kleisli m s r
--- feeds Continue back, stops on Done. Expects Fallback consumed by <|>.
+loopIter :: Monad m => Kleisli m s (Iter s r) -> Kleisli m s r
+-- feeds Loop back, returns on Exit
 ```
 
 Because it works for any `Monad m`, it applies to pure functions
 (`Kleisli Identity`, i.e. `(->)`) as well as effectful pipelines
 (`Kleisli IO`).
 
-## word-counting loop
+## the metering gap
+
+`meterK timeM` wraps output in `(Nanos, b)`.  This fixes the tensor to
+`(,)`.  `Knot` with `Either` then breaks because `Either` and `(,)` are
+different shapes.
+
+`Iter` bridges the gap: the state rides `(,)` as usual, and `Loop`/`Exit`
+provide the control flow that `Either` would have given for free.
+
+## word-counting loop (sketch)
 
 ```haskell
-processOneLine <|> done
+import Circuit (Iter (..), loopIter)
+import Control.Arrow (Kleisli (..), runKleisli)
+
+let step = Kleisli $ \(h, acc) -> do
+      eof <- hIsEOF h
+      if eof
+        then pure (Exit acc)
+        else do
+          line <- hGetLine h
+          let acc' = foldl' (\m w -> Map.insertWith (+) w 1 m) acc (getWords line)
+          pure (Loop (h, acc'))
+
+-- loopIter closes the iteration on (,)
+counts <- withFile "other/alice.md" ReadMode $ \h ->
+  runKleisli (loopIter step) (h, Map.empty)
 ```
 
-- `processOneLine`: reads a line, counts words, signals `Continue`.
-  On EOF, signals `Fallback` → `<|>` chains to `done`.
-- `done`: extracts the accumulated counts, signals `Done` → `loopAlt` stops.
-
-Each sub-stage (`hIsEOF`, `hGetLine`, `getWords`) can be metered by
-threading a measurement map through the state.  Per-stage metering works
-because nothing wraps the output in `(Nanos, ...)` — the measurement map
-rides alongside as state.
+Per-stage metering works by threading a measurement map through the state
+— the same state wire that `(,)` already carries.  No output wrapping, no
+`Either` shape constraint.
 
 ## vs process pipeline
 
-| approach | branching | metering | tensor |
-|----------|-----------|----------|--------|
-| `wordCountLineByLineMetered` | `bool` on hIsEOF | `meterNamed` per stage | Kleisli `(,)` (explicit state) |
-| `wordCountSignal` | `Continue`/`Fallback`/`Done` + `<|>` | `meterNamed` per stage | Kleisli `(,)` (explicit state) |
-| `Knot` with `Either` | `Left`/`Right` in step function | blocked (meterK breaks Either shape) | `Either` (trace iteration) |
+| approach | branching | loop mechanism | tensor |
+|----------|-----------|----------------|--------|
+| `wordCountLineByLine` | `bool` on hIsEOF | explicit recursion | plain `IO` |
+| `Iter` + `loopIter` | `Loop`/`Exit` | `loopIter` recurses | `Kleisli` `(,)` |
+| `Knot` with `Either` | `Left`/`Right` | `trace` iterates | `Either` (trace) |
 
-The `Signal` approach separates "keep looping" from "try alternative" from "done"
-— three distinct control signals, not two conflated into `Left`. The `<|>`
-combinator chains stages without nesting conditionals.
+`Iter` occupies the middle row: it gives you `Either`-style control flow
+while keeping the `(,)` tensor intact.
 
 ## relation to circuits
 
-`Signal`/`<|>`/`loopAlt` is a **bridge** from `Either`-trace iteration to
-`(,)`-trace state threading.  `Either` gives iteration for free via `Knot`,
-but breaks when outputs are wrapped (e.g. by `meterK`).  `Signal` rebuilds
-the same control flow by hand on `(,)`, keeping the state type intact.
+`Iter` is not a `Circuit` combinator.  It is a **bridge**: the `Either`
+trace gives iteration for free via `Knot`, but breaks when outputs are
+wrapped.  `Iter` rebuilds the same control flow by hand on `(,)`, keeping
+the state type intact.
 
-It lives in `Kleisli m`, not `Circuit`.  For Circuit-native looping with
-metering, the path is: use `(,)` tensor + `ambient` to thread the
-measurement map + explicit `hIsEOF`/`hGetLine` in the Kleisli.
+For genuine `Circuit`-native iteration, `Knot` + `Either` is still the
+right tool.  `Iter` is the escape hatch when `(,)` is fixed by context.
 
 ## verified
 
-- [x] per-stage metering with three-signal branching
-- [x] 2921 unique words (matches all other pipelines)
-- [ ] Circuit-native version with ambient + (,) tensor
+- [x] `Iter` encodes `Either`-trace iteration on `(,)`
+- [ ] per-stage metered loop using `Iter`
+- [ ] Circuit-native version with `ambient` + `(,)` tensor
