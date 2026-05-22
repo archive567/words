@@ -3,9 +3,13 @@
 `Signal s r = Continue s | Fallback s | Done r` gives three-way branching
 in Kleisli space — no new GADT constructor, no `Either` tensor required.
 
+Re-exported from `Circuit.Perf` (or import `Circuit.Perf.Signal` directly).
+
 ## the pieces
 
 ```haskell
+import Circuit.Perf (Signal (..), (<|>), loopAlt)
+
 data Signal s r = Continue s | Fallback s | Done r
 
 (<|>) :: Monad m => Kleisli m s (Signal s r)
@@ -17,6 +21,10 @@ loopAlt :: Monad m => Kleisli m s (Signal s r) -> Kleisli m s r
 -- feeds Continue back, stops on Done. Expects Fallback consumed by <|>.
 ```
 
+Because it works for any `Monad m`, it applies to pure functions
+(`Kleisli Identity`, i.e. `(->)`) as well as effectful pipelines
+(`Kleisli IO`).
+
 ## word-counting loop
 
 ```haskell
@@ -27,22 +35,10 @@ processOneLine <|> done
   On EOF, signals `Fallback` → `<|>` chains to `done`.
 - `done`: extracts the accumulated counts, signals `Done` → `loopAlt` stops.
 
-Each sub-stage (`hIsEOF`, `hGetLine`, `getWords`) is wrapped with `meterNamed`,
-accumulating per-stage timings in a `Map String [Nanos]` threaded through the state.
-
-## repl
-
-```haskell
->>> import Words
->>> (m, counts) <- wordCountSignal
->>> Map.size counts
-2921
->>> let p50 xs = sort xs !! (length xs `div` 2)
->>> mapM_ (\(n,ts) -> putStrLn $ n ++ ": " ++ show (length ts) ++ " calls, p50=" ++ show (p50 ts)) (Map.toList m)
-getWords: 3384 calls, p50=167
-hGetLine: 3384 calls, p50=333
-hIsEOF: 3385 calls, p50=208
-```
+Each sub-stage (`hIsEOF`, `hGetLine`, `getWords`) can be metered by
+threading a measurement map through the state.  Per-stage metering works
+because nothing wraps the output in `(Nanos, ...)` — the measurement map
+rides alongside as state.
 
 ## vs process pipeline
 
@@ -54,22 +50,18 @@ hIsEOF: 3385 calls, p50=208
 
 The `Signal` approach separates "keep looping" from "try alternative" from "done"
 — three distinct control signals, not two conflated into `Left`. The `<|>`
-combinator chains stages without nesting conditionals. Per-stage metering works
-because nothing wraps the output in `(Nanos, ...)` — the measurement map rides
-alongside as state.
+combinator chains stages without nesting conditionals.
 
 ## relation to circuits
 
-`Signal`/`<|>`/`loopAlt` live entirely in `Kleisli IO`. They don't use `Knot`,
-`Either`, or `Trace`. The loop is explicit recursion + state threading via `(,)`.
-Circuit's role here is providing `meterK timeM` (via `meterNamed`) — the metering
-infrastructure. The loop structure is Kleisli-native.
+`Signal`/`<|>`/`loopAlt` is a **bridge** from `Either`-trace iteration to
+`(,)`-trace state threading.  `Either` gives iteration for free via `Knot`,
+but breaks when outputs are wrapped (e.g. by `meterK`).  `Signal` rebuilds
+the same control flow by hand on `(,)`, keeping the state type intact.
 
-For Circuit-native looping with metering, the path is: use `(,)` tensor + `ambient`
-to thread the measurement map + explicit `hIsEOF`/`hGetLine` in the Kleisli.
-The `<|>` combinator translates naturally: `ambient` for state threading, `Lift`
-for each metered sub-stage, and the Kleisli-level `if eof then ... else ...` for
-the Fallback branch.
+It lives in `Kleisli m`, not `Circuit`.  For Circuit-native looping with
+metering, the path is: use `(,)` tensor + `ambient` to thread the
+measurement map + explicit `hIsEOF`/`hGetLine` in the Kleisli.
 
 ## verified
 
