@@ -1,8 +1,5 @@
-/.stack-work/
-/dist-newstyle/
-stack.yaml.lock
-**/.DS_Store
-cabal.project.local*
-/.hie/
+dist-newstyle/
 .ghc.environment.*
-/.hkgr/
+*.hie
+*.hi
+*.o
