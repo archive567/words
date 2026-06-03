@@ -67,6 +67,7 @@ library
     containers >=0.6 && <0.9,
     deepseq,
     text,
+    profunctors,
 
   exposed-modules:
     Word
@@ -85,5 +86,6 @@ executable word
     containers >=0.6 && <0.9,
     deepseq,
     words,
+    profunctors,
 
   ghc-options: -O2 -rtsopts
