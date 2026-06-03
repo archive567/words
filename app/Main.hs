@@ -10,6 +10,8 @@ import Circuit.Meter (meterAction)
 import Circuit.Meter.Time (Nanos, reifyC, timeM)
 import Control.Arrow (Kleisli (..), runKleisli, second)
 import Control.Category ((>>>))
+import Control.DeepSeq (force)
+import Control.Exception (evaluate)
 import Data.Bool (bool)
 import Data.Char (toLower)
 import Data.List (sortOn)
@@ -120,9 +122,8 @@ timedRun path = do
   -- stage 2: read + count
   (tRead, (h', m)) <- runKleisli (reifyC (meterAction timeM (reify readAndCount))) h
 
-  -- stage 3: format (pure, WHNF)
-  let output = fmtTable m
-  (tFmt, _) <- runKleisli (reifyC (meterAction timeM (Kleisli (pure . const ())))) output
+  -- stage 3: format
+  (tFmt, output) <- runKleisli (reifyC (meterAction timeM (Kleisli (evaluate . force . fmtTable)))) m
 
   -- stage 4: close + print
   (tPrint, ()) <- runKleisli (reifyC (meterAction timeM (Kleisli (\s -> hClose h' >> putStr s)))) output
