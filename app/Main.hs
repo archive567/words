@@ -98,13 +98,23 @@ wordCount path = putStr =<< runKleisli (reify wordPipeline) path
 -- Whole-pipeline metering
 -- ---------------------------------------------------------------------------
 
--- | Meter an arrow with the cartesian tensor fixed at construction time.
-meterC :: Kleisli IO a b -> Circuit (Kleisli IO) (,) a (Nanos, b)
-meterC = meterAction timeM
+-- | Meter a Kleisli arrow.  The circuit uses (,) for the measurement pair;
+-- the underlying arrow may have used Either or (,) for its own feedback.
+-- Hiding the double reify keeps call sites clean.
+meterK :: Kleisli IO a b -> Circuit (Kleisli IO) (,) a (Nanos, b)
+meterK = meterAction timeM
+
+-- | Run a metered Kleisli arrow.
+runMeterK :: Kleisli IO a b -> a -> IO (Nanos, b)
+runMeterK k a = runKleisli (reify (meterK k)) a
+
+-- | Run a metered IO action.
+runMeterIO :: (a -> IO b) -> a -> IO (Nanos, b)
+runMeterIO f = runMeterK (Kleisli f)
 
 perfTest :: FilePath -> IO ()
 perfTest path = do
-  (t, output) <- runKleisli (reify (meterC (reify wordPipeline))) path
+  (t, output) <- runMeterK (reify wordPipeline) path
   let ms = fromIntegral t / 1_000_000 :: Double
   putStrLn $ " wall: " <> show ms <> " ms"
   putStr output
@@ -136,16 +146,16 @@ fmtMs n =
 timedRun :: FilePath -> IO ()
 timedRun path = do
   -- stage 1: open
-  (tOpen, h) <- runKleisli (reify (meterC (Kleisli (\fp -> openFile fp ReadMode)))) path
+  (tOpen, h) <- runMeterIO (\fp -> openFile fp ReadMode) path
 
   -- stage 2: read + count
-  (tRead, (h', m)) <- runKleisli (reify (meterC (reify readAndCount))) h
+  (tRead, (h', m)) <- runMeterK (reify readAndCount) h
 
   -- stage 3: format
-  (tFmt, output) <- runKleisli (reify (meterC (Kleisli (evaluate . force . fmtTable)))) m
+  (tFmt, output) <- runMeterK (Kleisli (evaluate . force . fmtTable)) m
 
   -- stage 4: close + print
-  (tPrint, ()) <- runKleisli (reify (meterC (Kleisli (\s -> hClose h' >> putStr s)))) output
+  (tPrint, ()) <- runMeterIO (\s -> hClose h' >> putStr s) output
 
   putStrLn $ "open:  " <> fmtMs tOpen
   putStrLn $ "read:  " <> fmtMs tRead
