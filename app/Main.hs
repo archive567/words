@@ -7,7 +7,7 @@ module Main where
 
 import Circuit
 import Circuit.Meter (meterAction)
-import Circuit.Meter.Time (Nanos, reifyC, timeM)
+import Circuit.Meter.Time (Nanos, meterIO, reifyC, timeM)
 import Control.Arrow (Kleisli (..), runKleisli, second)
 import Control.Category ((>>>))
 import Control.DeepSeq (force)
@@ -52,9 +52,6 @@ fmtTable = unlines . map fmt . take 5 . sortOn (Down . snd) . Map.toList
 openf :: Circuit (Kleisli IO) t FilePath Handle
 openf = Lift (Kleisli (\fp -> openFile fp ReadMode))
 
-closef :: Circuit (Kleisli IO) t Handle ()
-closef = Lift (Kleisli hClose)
-
 -- ---------------------------------------------------------------------------
 -- Loop body — Either tensor, Handle rides the feedback wire
 -- ---------------------------------------------------------------------------
@@ -73,11 +70,15 @@ readAndCount = Knot (Kleisli step)
 -- Pipeline — open → read+count → format → close
 -- ---------------------------------------------------------------------------
 
+formatf :: Circuit (Kleisli IO) t (Map String Int) String
+formatf = Lift (Kleisli (pure . fmtTable))
+
 wordPipeline :: Circuit (Kleisli IO) Either FilePath String
 wordPipeline =
   openf
     >>> readAndCount
-    >>> Lift (Kleisli (\(h, m) -> hClose h >> pure (fmtTable m)))
+    >>> Lift (Kleisli (\(h, m) -> hClose h >> pure m))
+    >>> formatf
 
 wordCount :: FilePath -> IO ()
 wordCount path = putStr =<< runKleisli (reify wordPipeline) path
@@ -98,6 +99,9 @@ perfTest path = do
 -- ---------------------------------------------------------------------------
 
 demoSecond :: FilePath -> IO ()
+-- ⧈ second lives at the Kleisli level — Circuit arr Either has no Arrow
+--    instance.  The Circuit-level analogue is `ambient braid`, which threads
+--    state through Either feedback.  Here the tag is pure Kleisli strength.
 demoSecond path = do
   (tag, output) <- runKleisli (second (reify wordPipeline)) ("tag-value", path)
   putStrLn $ "tag: " <> tag
@@ -117,7 +121,7 @@ fmtMs n =
 timedRun :: FilePath -> IO ()
 timedRun path = do
   -- stage 1: open
-  (tOpen, h) <- runKleisli (reifyC (meterAction timeM (reify (openf :: Circuit (Kleisli IO) (,) FilePath Handle)))) path
+  (tOpen, h) <- runKleisli (reifyC (meterIO (\fp -> openFile fp ReadMode))) path
 
   -- stage 2: read + count
   (tRead, (h', m)) <- runKleisli (reifyC (meterAction timeM (reify readAndCount))) h
@@ -126,7 +130,7 @@ timedRun path = do
   (tFmt, output) <- runKleisli (reifyC (meterAction timeM (Kleisli (evaluate . force . fmtTable)))) m
 
   -- stage 4: close + print
-  (tPrint, ()) <- runKleisli (reifyC (meterAction timeM (Kleisli (\s -> hClose h' >> putStr s)))) output
+  (tPrint, ()) <- runKleisli (reifyC (meterIO (\s -> hClose h' >> putStr s))) output
 
   putStrLn $ "open:  " <> fmtMs tOpen
   putStrLn $ "read:  " <> fmtMs tRead
