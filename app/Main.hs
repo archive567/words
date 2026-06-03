@@ -8,7 +8,7 @@ module Main where
 import Circuit
 import Circuit.Meter (meterAction)
 import Circuit.Meter.Time (Nanos, meterIO, reifyC, timeM)
-import Control.Arrow (Kleisli (..), runKleisli, second)
+import Control.Arrow (Kleisli (..), arr, first, runKleisli, second)
 import Control.Category ((>>>))
 import Control.DeepSeq (force)
 import Control.Exception (evaluate)
@@ -48,9 +48,11 @@ fmtTable = unlines . map fmt . take 5 . sortOn (Down . snd) . Map.toList
 -- ---------------------------------------------------------------------------
 -- Circuit primitives — payload-neutral, no closures
 -- ---------------------------------------------------------------------------
-
 openf :: Circuit (Kleisli IO) t FilePath Handle
 openf = Lift (Kleisli (\fp -> openFile fp ReadMode))
+
+closef :: Circuit (Kleisli IO) t Handle ()
+closef = Lift (Kleisli hClose)
 
 -- ---------------------------------------------------------------------------
 -- Loop body — Either tensor, Handle rides the feedback wire
@@ -73,11 +75,16 @@ readAndCount = Knot (Kleisli step)
 formatf :: Circuit (Kleisli IO) t (Map String Int) String
 formatf = Lift (Kleisli (pure . fmtTable))
 
+-- | Close the Handle and keep the paired value, using the 'closef' primitive
+-- at the Kleisli level (Circuit itself lacks a 'Strong' instance).
+post :: Kleisli IO (Handle, a) a
+post = first (reifyC closef) >>> arr snd
+
 wordPipeline :: Circuit (Kleisli IO) Either FilePath String
 wordPipeline =
   openf
     >>> readAndCount
-    >>> Lift (Kleisli (\(h, m) -> hClose h >> pure m))
+    >>> Lift post
     >>> formatf
 
 wordCount :: FilePath -> IO ()
