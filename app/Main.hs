@@ -7,7 +7,7 @@ module Main where
 
 import Circuit
 import Circuit.Meter (meterAction)
-import Circuit.Meter.Time (Nanos, meterIO, reifyC, timeM)
+import Circuit.Meter.Time (Nanos, timeM)
 import Control.Arrow (Kleisli (..), arr, first, runKleisli, second)
 import Control.Category ((>>>))
 import Control.DeepSeq (force)
@@ -54,6 +54,10 @@ openf = Lift (Kleisli (\fp -> openFile fp ReadMode))
 closef :: Circuit (Kleisli IO) t Handle ()
 closef = Lift (Kleisli hClose)
 
+-- | Cartesian variant so 'reify' infers without 'reifyC'.
+closefC :: Circuit (Kleisli IO) (,) Handle ()
+closefC = closef
+
 -- ---------------------------------------------------------------------------
 -- Loop body — Either tensor, Handle rides the feedback wire
 -- ---------------------------------------------------------------------------
@@ -78,7 +82,7 @@ formatf = Lift (Kleisli (pure . fmtTable))
 -- | Close the Handle and keep the paired value, using the 'closef' primitive
 -- at the Kleisli level (Circuit itself lacks a 'Strong' instance).
 post :: Kleisli IO (Handle, a) a
-post = first (reifyC closef) >>> arr snd
+post = first (reify closefC) >>> arr snd
 
 wordPipeline :: Circuit (Kleisli IO) Either FilePath String
 wordPipeline =
@@ -94,9 +98,13 @@ wordCount path = putStr =<< runKleisli (reify wordPipeline) path
 -- Whole-pipeline metering
 -- ---------------------------------------------------------------------------
 
+-- | Meter an arrow with the cartesian tensor fixed at construction time.
+meterC :: Kleisli IO a b -> Circuit (Kleisli IO) (,) a (Nanos, b)
+meterC = meterAction timeM
+
 perfTest :: FilePath -> IO ()
 perfTest path = do
-  (t, output) <- runKleisli (reifyC (meterAction timeM (reify wordPipeline))) path
+  (t, output) <- runKleisli (reify (meterC (reify wordPipeline))) path
   let ms = fromIntegral t / 1_000_000 :: Double
   putStrLn $ " wall: " <> show ms <> " ms"
   putStr output
@@ -128,16 +136,16 @@ fmtMs n =
 timedRun :: FilePath -> IO ()
 timedRun path = do
   -- stage 1: open
-  (tOpen, h) <- runKleisli (reifyC (meterIO (\fp -> openFile fp ReadMode))) path
+  (tOpen, h) <- runKleisli (reify (meterC (Kleisli (\fp -> openFile fp ReadMode)))) path
 
   -- stage 2: read + count
-  (tRead, (h', m)) <- runKleisli (reifyC (meterAction timeM (reify readAndCount))) h
+  (tRead, (h', m)) <- runKleisli (reify (meterC (reify readAndCount))) h
 
   -- stage 3: format
-  (tFmt, output) <- runKleisli (reifyC (meterAction timeM (Kleisli (evaluate . force . fmtTable)))) m
+  (tFmt, output) <- runKleisli (reify (meterC (Kleisli (evaluate . force . fmtTable)))) m
 
   -- stage 4: close + print
-  (tPrint, ()) <- runKleisli (reifyC (meterIO (\s -> hClose h' >> putStr s))) output
+  (tPrint, ()) <- runKleisli (reify (meterC (Kleisli (\s -> hClose h' >> putStr s)))) output
 
   putStrLn $ "open:  " <> fmtMs tOpen
   putStrLn $ "read:  " <> fmtMs tRead
