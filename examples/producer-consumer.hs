@@ -12,7 +12,7 @@ import System.IO (Handle, IOMode (ReadMode), hClose, hGetLine, hIsEOF, openFile)
 
 -- | Domain primitives #################################################
 openf :: Circuit (Kleisli IO) t FilePath Handle
-openf = Lift (Kleisli (\fp -> openFile fp ReadMode))
+openf = Lift (Kleisli (`openFile` ReadMode))
 
 getLine :: Circuit (Kleisli IO) t Handle String
 getLine = Lift (Kleisli hGetLine)

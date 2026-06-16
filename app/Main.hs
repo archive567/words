@@ -49,7 +49,7 @@ fmtTable = unlines . map fmt . take 5 . sortOn (Down . snd) . Map.toList
 -- Circuit primitives — payload-neutral, no closures
 -- ---------------------------------------------------------------------------
 openf :: Circuit (Kleisli IO) t FilePath Handle
-openf = Lift (Kleisli (\fp -> openFile fp ReadMode))
+openf = Lift (Kleisli (`openFile` ReadMode))
 
 closef :: Circuit (Kleisli IO) t Handle ()
 closef = Lift (Kleisli hClose)
@@ -137,7 +137,7 @@ fmtMs n =
 timedRun :: FilePath -> IO ()
 timedRun path = do
   -- stage 1: open
-  (tOpen, h) <- runKleisli (reify (meterK (Kleisli (\fp -> openFile fp ReadMode)))) path
+  (tOpen, h) <- runKleisli (reify (meterK (Kleisli (`openFile` ReadMode)))) path
 
   -- stage 2: read + count
   (tRead, (h', m)) <- runKleisli (reify (meterK (reify readAndCount))) h
