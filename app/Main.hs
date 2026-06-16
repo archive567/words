@@ -63,7 +63,7 @@ closefC = closef
 -- ---------------------------------------------------------------------------
 
 readAndCount :: Circuit (Kleisli IO) Either Handle (Handle, Map String Int)
-readAndCount = Knot (Kleisli step)
+readAndCount = Knot (Lift (Kleisli step))
   where
     step (Left (h, acc)) =
       hIsEOF h >>= bool
