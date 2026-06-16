@@ -66,9 +66,10 @@ readAndCount :: Circuit (Kleisli IO) Either Handle (Handle, Map String Int)
 readAndCount = Knot (Lift (Kleisli step))
   where
     step (Left (h, acc)) =
-      hIsEOF h >>= bool
-        (hGetLine h >>= \line -> pure (Left (h, foldCounts (noEmpties (lowerWords (splitWords line))) acc)))
-        (pure (Right (h, acc)))
+      hIsEOF h
+        >>= bool
+          (hGetLine h >>= \line -> pure (Left (h, foldCounts (noEmpties (lowerWords (splitWords line))) acc)))
+          (pure (Right (h, acc)))
     step (Right h) =
       pure (Left (h, Map.empty))
 
