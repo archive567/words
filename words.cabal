@@ -60,14 +60,14 @@ library
   hs-source-dirs: src
   build-depends:
     base >=4.14 && <5,
-    bytestring,
-    circuits,
-    circuits-meter,
-    circuits-parser,
+    bytestring >=0.11 && <0.13,
+    circuits >=0.2 && <0.3,
+    circuits-meter >=0.1 && <0.2,
+    circuits-parser >=0.1 && <0.2,
     containers >=0.6 && <0.9,
-    deepseq,
-    text,
-    profunctors,
+    deepseq >=1.5 && <1.6,
+    text >=2.0 && <3,
+    profunctors >=5.6 && <5.7,
 
   exposed-modules:
     Word
@@ -81,11 +81,22 @@ executable word
   hs-source-dirs: app
   build-depends:
     base >=4.14 && <5,
-    circuits,
-    circuits-meter,
+    circuits >=0.2 && <0.3,
+    circuits-meter >=0.1 && <0.2,
     containers >=0.6 && <0.9,
-    deepseq,
+    deepseq >=1.5 && <1.6,
     words,
-    profunctors,
+    profunctors >=5.6 && <5.7,
+
+  ghc-options: -O2 -rtsopts
+
+executable producer-consumer
+  import: ghc-options-stanza
+  import: ghc2024-stanza
+  main-is: producer-consumer.hs
+  hs-source-dirs: examples
+  build-depends:
+    base >=4.14 && <5,
+    circuits >=0.2 && <0.3,
 
   ghc-options: -O2 -rtsopts

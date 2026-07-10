@@ -1,14 +1,13 @@
--- | Word-count pipeline, producer-consumer style.
+-- | Word-count pipeline with stopwatch/interval metering.
 --
--- No closure-captured Handles. No IORef. The Handle is an explicit wire:
--- produced by openf, threaded through the Either-trace loop, and consumed
--- by the close stage.
+-- The timing log is a first-class wire: it travels alongside the payload on
+-- the (,) tensor. Every composition point can be a named marker.
 module Main where
 
 import Circuit
-import Circuit.Meter (meterAction)
-import Circuit.Meter.Time (Nanos, timeM)
-import Control.Arrow (Kleisli (..), arr, first, runKleisli, second)
+import Circuit.Meter.Stopwatch
+import Circuit.Meter.Time (Nanos, timeX)
+import Control.Arrow (Kleisli (..), arr, first, runKleisli)
 import Control.Category ((>>>))
 import Control.DeepSeq (force)
 import Control.Exception (evaluate)
@@ -46,87 +45,149 @@ fmtTable = unlines . map fmt . take 5 . sortOn (Down . snd) . Map.toList
     fmt (w, c) = w <> ": " <> show c
 
 -- ---------------------------------------------------------------------------
--- Circuit primitives — payload-neutral, no closures
+-- Trace primitives — payload-neutral, no closures
 -- ---------------------------------------------------------------------------
-openf :: Circuit (Kleisli IO) t FilePath Handle
-openf = Lift (Kleisli (`openFile` ReadMode))
 
-closef :: Circuit (Kleisli IO) t Handle ()
-closef = Lift (Kleisli hClose)
+openf :: Trace t (Kleisli IO) FilePath Handle
+openf = Arr (Kleisli (`openFile` ReadMode))
 
--- | Cartesian variant so 'reify' infers without 'reifyC'.
-closefC :: Circuit (Kleisli IO) (,) Handle ()
-closefC = closef
+closef :: Trace t (Kleisli IO) Handle ()
+closef = Arr (Kleisli hClose)
+
+-- | Close the Handle and keep the paired value.
+post :: Kleisli IO (Handle, a) a
+post = first (run (closef :: Trace (,) (Kleisli IO) Handle ())) >>> arr snd
+
+-- | Force the map component of the loop result so the read stage pays for
+-- the counting work rather than deferring it to formatting.
+forceMap :: Kleisli IO (Handle, Map String Int) (Handle, Map String Int)
+forceMap = Kleisli $ \(h, m) -> do
+  !m' <- evaluate (force m)
+  pure (h, m')
+
+formatf :: Trace t (Kleisli IO) (Map String Int) String
+formatf = Arr (Kleisli (pure . fmtTable))
+
+-- | Forced variant so the stopwatch measures the actual formatting work.
+formatfForced :: Trace t (Kleisli IO) (Map String Int) String
+formatfForced = Arr (Kleisli (evaluate . force . fmtTable))
 
 -- ---------------------------------------------------------------------------
 -- Loop body — Either tensor, Handle rides the feedback wire
 -- ---------------------------------------------------------------------------
 
-readAndCount :: Circuit (Kleisli IO) Either Handle (Handle, Map String Int)
-readAndCount = Knot (Lift (Kleisli step))
+readAndCount :: Trace Either (Kleisli IO) Handle (Handle, Map String Int)
+readAndCount = Knot (Kleisli step)
   where
     step (Left (h, acc)) =
       hIsEOF h
         >>= bool
-          (hGetLine h >>= \line -> pure (Left (h, foldCounts (noEmpties (lowerWords (splitWords line))) acc)))
+          ( hGetLine h >>= \line ->
+              let ws = splitWords line
+                  ls = lowerWords ws
+                  ns = noEmpties ls
+                  acc' = foldCounts ns acc
+               in pure (Left (h, acc'))
+          )
           (pure (Right (h, acc)))
     step (Right h) =
       pure (Left (h, Map.empty))
 
 -- ---------------------------------------------------------------------------
--- Pipeline — open → read+count → format → close
+-- Stopwatch pipeline
 -- ---------------------------------------------------------------------------
 
-formatf :: Circuit (Kleisli IO) t (Map String Int) String
-formatf = Lift (Kleisli (pure . fmtTable))
-
--- | Close the Handle and keep the paired value, using the 'closef' primitive
--- at the Kleisli level (Circuit itself lacks a 'Strong' instance).
-post :: Kleisli IO (Handle, a) a
-post = first (reify closefC) >>> arr snd
-
-wordPipeline :: Circuit (Kleisli IO) Either FilePath String
+-- | Top-level word-count pipeline with interval markers.
+wordPipeline :: Trace (,) (Kleisli IO) FilePath (String, Watches Nanos Nanos)
 wordPipeline =
-  openf
-    >>> readAndCount
-    >>> Lift post
-    >>> formatf
+  start timeX "total"
+    >>> carryT (openf :: Trace (,) (Kleisli IO) FilePath Handle)
+    >>> lap timeX "opened"
+    >>> carryT readAndCount
+    >>> carry forceMap
+    >>> lap timeX "read"
+    >>> carry post
+    >>> lap timeX "closed"
+    >>> carryT (formatfForced :: Trace (,) (Kleisli IO) (Map String Int) String)
+    >>> stop timeX "total"
 
+-- | Run the pipeline and print the word table plus the timing log.
 wordCount :: FilePath -> IO ()
-wordCount path = putStr =<< runKleisli (reify wordPipeline) path
-
--- ---------------------------------------------------------------------------
--- Whole-pipeline metering
--- ---------------------------------------------------------------------------
-
--- | Meter a Kleisli arrow with the cartesian tensor fixed at construction.
-meterK :: Kleisli IO a b -> Circuit (Kleisli IO) (,) a (Nanos, b)
-meterK = meterAction timeM
-
-perfTest :: FilePath -> IO ()
-perfTest path = do
-  (t, output) <- runKleisli (reify (meterK (reify wordPipeline))) path
-  let ms = fromIntegral t / 1_000_000 :: Double
-  putStrLn $ " wall: " <> show ms <> " ms"
+wordCount path = do
+  (output, ws) <- runKleisli (run wordPipeline) path
   putStr output
+  putStrLn ""
+  putStrLn "interval timings:"
+  mapM_ (\(name, ts) -> putStrLn $ "  " <> name <> ": " <> fmtMs (sum ts)) $ Map.toList (allLaps ws)
 
 -- ---------------------------------------------------------------------------
--- second' experiment — thread a String tag through the pipeline
--- ---------------------------------------------------------------------------
-
-demoSecond :: FilePath -> IO ()
--- ⧈ second lives at the Kleisli level — Circuit arr Either has no Arrow
---    instance.  The Circuit-level analogue is `ambient braid`, which threads
---    state through Either feedback.  Here the tag is pure Kleisli strength.
-demoSecond path = do
-  (tag, output) <- runKleisli (second (reify wordPipeline)) ("tag-value", path)
-  putStrLn $ "tag: " <> tag
-  putStr output
-
--- ---------------------------------------------------------------------------
--- Instrumented run — per-stage metering, no IORef
+-- Function-composition experiment
 --
--- Each stage is metered individually and the timings are reported directly.
+-- Compare timing when the pure word-processing functions are composed
+-- (allowing GHC to fuse) versus when they are kept as separate Kleisli
+-- stages (forcing the intermediate lists).
+-- ---------------------------------------------------------------------------
+
+-- | One line through the separate pure stages, each measured.
+--
+-- Work is forced only at the end, so most cost collapses into the final
+-- 'sep' interval. The intermediate laps measure almost nothing.
+separateStages :: Trace (,) (Kleisli IO) String ([String], Watches Nanos Nanos)
+separateStages =
+  start timeX "sep"
+    >>> carry (Kleisli (pure . splitWords))
+    >>> lap timeX "split"
+    >>> carry (Kleisli (pure . lowerWords))
+    >>> lap timeX "lower"
+    >>> carry (Kleisli (pure . noEmpties))
+    >>> carry (Kleisli (evaluate . force))
+    >>> stop timeX "sep"
+
+-- | One line through the separate pure stages, forcing after each stage.
+--
+-- This defeats fusion and materialises every intermediate list, but it shows
+-- where the time actually goes.
+separateStagesForced :: Trace (,) (Kleisli IO) String ([String], Watches Nanos Nanos)
+separateStagesForced =
+  start timeX "sep"
+    >>> carry (Kleisli (pure . splitWords))
+    >>> carry (Kleisli (evaluate . force))
+    >>> lap timeX "split"
+    >>> carry (Kleisli (pure . lowerWords))
+    >>> carry (Kleisli (evaluate . force))
+    >>> lap timeX "lower"
+    >>> carry (Kleisli (pure . noEmpties))
+    >>> carry (Kleisli (evaluate . force))
+    >>> lap timeX "filter"
+    >>> stop timeX "sep"
+
+-- | One line through the fully composed pure function.
+fusedStage :: Trace (,) (Kleisli IO) String ([String], Watches Nanos Nanos)
+fusedStage =
+  start timeX "fus"
+    >>> carry (Kleisli (pure . noEmpties . lowerWords . splitWords))
+    >>> carry (Kleisli (evaluate . force))
+    >>> stop timeX "fus"
+
+-- | Process a repeated line in three ways to expose laziness + fusion effects.
+lineExperiment :: String -> IO ()
+lineExperiment line = do
+  putStrLn "\n--- function-composition experiment ---"
+  let wordsPerRun = 100000
+      longLine = unwords (replicate wordsPerRun line)
+  (_, wsSep) <- runKleisli (run separateStages) longLine
+  (_, wsSepF) <- runKleisli (run separateStagesForced) longLine
+  (_, wsFus) <- runKleisli (run fusedStage) longLine
+  putStrLn $ "input words: " <> show wordsPerRun
+  putStrLn "separate (lazy, force at end):"
+  mapM_ (\(name, ts) -> putStrLn $ "  " <> name <> ": " <> fmtMs (sum ts)) $ Map.toList (allLaps wsSep)
+  putStrLn "separate (force after each stage):"
+  mapM_ (\(name, ts) -> putStrLn $ "  " <> name <> ": " <> fmtMs (sum ts)) $ Map.toList (allLaps wsSepF)
+  putStrLn "fused (single force):"
+  mapM_ (\(name, ts) -> putStrLn $ "  " <> name <> ": " <> fmtMs (sum ts)) $ Map.toList (allLaps wsFus)
+
+-- ---------------------------------------------------------------------------
+-- Helpers
 -- ---------------------------------------------------------------------------
 
 fmtMs :: Nanos -> String
@@ -134,31 +195,7 @@ fmtMs n =
   let ms = fromIntegral n / 1_000_000 :: Double
    in if ms < 0.001 then "<0.001ms" else showFFloat (Just 3) ms "ms"
 
-timedRun :: FilePath -> IO ()
-timedRun path = do
-  -- stage 1: open
-  (tOpen, h) <- runKleisli (reify (meterK (Kleisli (`openFile` ReadMode)))) path
-
-  -- stage 2: read + count
-  (tRead, (h', m)) <- runKleisli (reify (meterK (reify readAndCount))) h
-
-  -- stage 3: format
-  (tFmt, output) <- runKleisli (reify (meterK (Kleisli (evaluate . force . fmtTable)))) m
-
-  -- stage 4: close + print
-  (tPrint, ()) <- runKleisli (reify (meterK (Kleisli (\s -> hClose h' >> putStr s)))) output
-
-  putStrLn $ "open:  " <> fmtMs tOpen
-  putStrLn $ "read:  " <> fmtMs tRead
-  putStrLn $ "fmt:   " <> fmtMs tFmt
-  putStrLn $ "print: " <> fmtMs tPrint
-
 main :: IO ()
 main = do
   wordCount "other/alice.md"
-  putStrLn ""
-  perfTest "other/alice.md"
-  putStrLn ""
-  demoSecond "other/alice.md"
-  putStrLn ""
-  timedRun "other/alice.md"
+  lineExperiment "The quick brown fox jumps over the lazy dog"

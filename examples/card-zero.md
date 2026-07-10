@@ -81,7 +81,7 @@ xFormatTop n =
 ```haskell
 perfTest :: IO ()
 perfTest = do
-  (t, ()) <- runKleisli (reify (meterIO (const xCountFile))) ()
+  (t, ()) <- runKleisli (run (meterIO (const xCountFile))) ()
   let ms = fromIntegral t / 1_000_000 :: Double
   putStrLn $ " wall: " ++ show ms ++ " ms"
 ```
