@@ -61,7 +61,7 @@ library
   build-depends:
     base >=4.14 && <5,
     bytestring >=0.11 && <0.13,
-    circuits >=0.2 && <0.3,
+    circuits >=0.2 && <0.4,
     circuits-meter >=0.1 && <0.2,
     circuits-parser >=0.1 && <0.2,
     containers >=0.6 && <0.9,
@@ -81,7 +81,7 @@ executable word
   hs-source-dirs: app
   build-depends:
     base >=4.14 && <5,
-    circuits >=0.2 && <0.3,
+    circuits >=0.2 && <0.4,
     circuits-meter >=0.1 && <0.2,
     containers >=0.6 && <0.9,
     deepseq >=1.5 && <1.6,
@@ -97,6 +97,6 @@ executable producer-consumer
   hs-source-dirs: examples
   build-depends:
     base >=4.14 && <5,
-    circuits >=0.2 && <0.3,
+    circuits >=0.2 && <0.4,
 
   ghc-options: -O2 -rtsopts
